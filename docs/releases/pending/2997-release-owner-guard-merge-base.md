@@ -45,6 +45,11 @@ main-side edits inflated the accusation list).
   group heads are constructed; an emergency fix on `main` activates
   immediately for all runs because the guard job executes the protected base
   copy of the checker.
+- The guard now requires both event SHAs and a shared ancestor in the local
+  object database (that is what `git merge-base` resolves); the guard job's
+  `fetch-depth: 0` checkout provides it. A future shallow-fetch optimization
+  on that job would make the guard fail closed (`cannot resolve merge-base`)
+  instead of evaluating — deliberately, per the fail-closed posture.
 - The `release-owner-guard` job's bootstrap `else` leg (checker absent at the
   base SHA) still uses a two-dot shell diff; it is unreachable for any PR
   based on current `main` and was left untouched (no workflow hash churn).
