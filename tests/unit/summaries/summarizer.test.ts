@@ -362,9 +362,14 @@ describe('createSummary normal mode goldens (byte-identical regression pin)', ()
 	});
 
 	test('JSON object output: exact header, preview, and footer', () => {
-		const result = createSummary(JSON.stringify({ a: 1 }), 'bash', 'test-1', 500);
+		const result = createSummary(
+			JSON.stringify({ a: 1 }),
+			'bash',
+			'test-1',
+			500,
+		);
 		expect(result).toBe(
-			'[SUMMARY test-1] 8 B | json | 1 lines\n{ a: number }\n→ Use /swarm retrieve test-1 for full content',
+			'[SUMMARY test-1] 7 B | json | 1 lines\n{ a: number }\n→ Use /swarm retrieve test-1 for full content',
 		);
 	});
 });
