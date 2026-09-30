@@ -294,3 +294,77 @@ describe('createSummary', () => {
 		expect(result).toMatch(/\[... \d+ bytes total, truncated \.\.\.\]/);
 	});
 });
+
+describe('createSummary partial mode', () => {
+	const SUMMARY_ID = 'test-1';
+	const MAX_CHARS = 500;
+
+	test('header keeps the [SUMMARY id] marker and is explicitly marked partial', () => {
+		const result = createSummary('hello world', 'bash', SUMMARY_ID, MAX_CHARS, {
+			partial: true,
+		});
+		const [headerLine] = result.split('\n');
+		expect(headerLine.startsWith(`[SUMMARY ${SUMMARY_ID}]`)).toBe(true);
+		expect(headerLine).toBe(
+			`[SUMMARY ${SUMMARY_ID}] 11 B | code | 1 lines | partial`,
+		);
+	});
+
+	test('footer is the partial wording and never claims full content is retrievable', () => {
+		const result = createSummary('hello world', 'bash', SUMMARY_ID, MAX_CHARS, {
+			partial: true,
+		});
+		const lines = result.split('\n');
+		const footerLine = lines[lines.length - 1];
+		expect(footerLine).toBe(
+			`→ partial content stored; full output was not recoverable`,
+		);
+		expect(footerLine).not.toContain('for full content');
+	});
+
+	test('respects the byte budget when the preview overflows the budget', () => {
+		const longOutput = 'x'.repeat(1000);
+		const result = createSummary(longOutput, 'bash', SUMMARY_ID, 120, {
+			partial: true,
+		});
+		expect(Buffer.byteLength(result, 'utf8') <= 120).toBe(true);
+		expect(result).toContain('...');
+	});
+
+	test('respects the byte budget when the informative marker fits', () => {
+		const longOutput = 'x'.repeat(1000);
+		const result = createSummary(longOutput, 'bash', SUMMARY_ID, 300, {
+			partial: true,
+		});
+		expect(Buffer.byteLength(result, 'utf8') <= 300).toBe(true);
+		expect(result).toMatch(/\[... \d+ bytes total, truncated \.\.\.\]/);
+	});
+});
+
+describe('createSummary normal mode goldens (byte-identical regression pin)', () => {
+	test('code-type output: exact header, preview, and footer', () => {
+		const result = createSummary('hello world', 'bash', 'test-1', 500);
+		expect(result).toBe(
+			'[SUMMARY test-1] 11 B | code | 1 lines\nhello world\n→ Use /swarm retrieve test-1 for full content',
+		);
+	});
+
+	test('text-type output: exact header, preview, and footer', () => {
+		const result = createSummary(
+			'first line\nsecond line\nthird line',
+			'some_tool',
+			'test-1',
+			500,
+		);
+		expect(result).toBe(
+			'[SUMMARY test-1] 33 B | text | 3 lines\nfirst line\nsecond line\nthird line\n→ Use /swarm retrieve test-1 for full content',
+		);
+	});
+
+	test('JSON object output: exact header, preview, and footer', () => {
+		const result = createSummary(JSON.stringify({ a: 1 }), 'bash', 'test-1', 500);
+		expect(result).toBe(
+			'[SUMMARY test-1] 8 B | json | 1 lines\n{ a: number }\n→ Use /swarm retrieve test-1 for full content',
+		);
+	});
+});

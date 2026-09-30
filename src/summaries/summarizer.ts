@@ -315,11 +315,26 @@ function summarizeText(output: string, maxLines: number): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Options for {@link createSummary}.
+ */
+export interface SummaryOptions {
+	/**
+	 * Mark the summary as partial: the stored content is known-truncated
+	 * and the full output was not recoverable. The header keeps the
+	 * `[SUMMARY <id>]` marker and gains an explicit ` | partial` mark; the
+	 * footer stops claiming the full output is retrievable.
+	 */
+	partial?: boolean;
+}
+
+/**
  * Creates a structured summary string from tool output.
- * @param output - The full tool output string
+ * @param output - The full tool output string (in partial mode, the stored
+ * known-truncated content, which the size/lines/type fields then describe)
  * @param toolName - The name of the tool that produced the output
  * @param summaryId - Unique identifier for this summary
  * @param maxSummaryChars - Maximum bytes allowed for the preview
+ * @param options - Optional behavior switches (e.g. `partial` mode)
  * @returns Formatted summary string
  */
 export function createSummary(
@@ -327,6 +342,7 @@ export function createSummary(
 	toolName: string,
 	summaryId: string,
 	maxSummaryChars: number,
+	options?: SummaryOptions,
 ): string {
 	const contentType = detectContentType(output, toolName);
 	const lineCount = output.split('\n').length;
@@ -336,8 +352,17 @@ export function createSummary(
 	// Calculate overhead for header and footer lines (in BYTES — the footer's
 	// "→" is 3 UTF-8 bytes, so a character count would under-reserve and let
 	// the total slip past the cap).
-	const headerLine = `[SUMMARY ${summaryId}] ${formattedSize} | ${contentType} | ${lineCount} lines`;
-	const footerLine = `→ Use /swarm retrieve ${summaryId} for full content`;
+	const partial = options?.partial === true;
+	// Partial mode: the header keeps the `[SUMMARY <id>]` marker and is
+	// explicitly marked partial, and the footer must never claim the full
+	// output is retrievable. Normal mode stays byte-identical to the
+	// legacy format.
+	const headerLine = partial
+		? `[SUMMARY ${summaryId}] ${formattedSize} | ${contentType} | ${lineCount} lines | partial`
+		: `[SUMMARY ${summaryId}] ${formattedSize} | ${contentType} | ${lineCount} lines`;
+	const footerLine = partial
+		? `→ partial content stored; full output was not recoverable`
+		: `→ Use /swarm retrieve ${summaryId} for full content`;
 	const overhead =
 		Buffer.byteLength(headerLine, 'utf8') +
 		1 +
