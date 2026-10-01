@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.188.4](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.188.3...v7.188.4) (2026-10-01)
+
+
+### Bug Fixes
+
+* **lang:** parse .tsx with the tsx grammar in syntax_check ([#3013](https://github.com/ZaxbyHub/opencode-swarm/issues/3013)) ([b5bc780](https://github.com/ZaxbyHub/opencode-swarm/commit/b5bc780749b4ae195c2788a7ab8f62d1d97451de))
+
 ## [7.188.3](https://github.com/ZaxbyHub/opencode-swarm/compare/v7.188.2...v7.188.3) (2026-10-01)
 
 
