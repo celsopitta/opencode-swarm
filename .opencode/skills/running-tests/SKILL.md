@@ -185,7 +185,7 @@ Get-Content "$env:TEMP\test_out.txt" | Select-Object -Last 50
 
 When `bun test` output exceeds the bash tool's buffer, it is saved to a file with an ID
 like `tool_dff778...`. This ID format is **not** accepted by `retrieve_summary` (which only
-reads `S1`, `S2` etc. format IDs). The output is effectively lost.
+reads `S1`, `S2` etc. format IDs). When the result arrives as a `[SUMMARY Sx]` stub, that `Sx` id retrieves the stored output (the full output unless the stub is marked `partial`); otherwise the output is effectively lost.
 
 **Prevention — pipe to a file explicitly:**
 

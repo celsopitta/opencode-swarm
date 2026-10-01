@@ -1604,7 +1604,8 @@
             "dispatch_lanes",
             "dispatch_lanes_async",
             "collect_lane_results",
-            "parse_lane_candidates"
+            "parse_lane_candidates",
+            "skill"
           ],
           "type": "array",
           "items": {

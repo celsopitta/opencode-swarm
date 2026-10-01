@@ -227,7 +227,9 @@ describe('createSummary', () => {
 		const result = createSummary(output, 'bash', SUMMARY_ID, MAX_CHARS);
 		expect(result).toContain(`[SUMMARY ${SUMMARY_ID}]`);
 		expect(result).toContain('hello world');
-		expect(result).toContain(`→ Use /swarm retrieve ${SUMMARY_ID}`);
+		expect(result).toContain(
+			`→ Use retrieve_summary ${SUMMARY_ID} for full output`,
+		);
 	});
 
 	test('JSON object shows key structure (AC-008, SC-012)', () => {
@@ -317,9 +319,9 @@ describe('createSummary partial mode', () => {
 		const lines = result.split('\n');
 		const footerLine = lines[lines.length - 1];
 		expect(footerLine).toBe(
-			`→ partial content stored; full output was not recoverable`,
+			`→ Partial output only; use retrieve_summary ${SUMMARY_ID}`,
 		);
-		expect(footerLine).not.toContain('for full content');
+		expect(footerLine).not.toContain('for full output');
 	});
 
 	test('respects the byte budget when the preview overflows the budget', () => {
@@ -341,11 +343,11 @@ describe('createSummary partial mode', () => {
 	});
 });
 
-describe('createSummary normal mode goldens (byte-identical regression pin)', () => {
+describe('createSummary normal mode goldens (exact-format regression pin)', () => {
 	test('code-type output: exact header, preview, and footer', () => {
 		const result = createSummary('hello world', 'bash', 'test-1', 500);
 		expect(result).toBe(
-			'[SUMMARY test-1] 11 B | code | 1 lines\nhello world\n→ Use /swarm retrieve test-1 for full content',
+			'[SUMMARY test-1] 11 B | code | 1 lines\nhello world\n→ Use retrieve_summary test-1 for full output',
 		);
 	});
 
@@ -357,7 +359,7 @@ describe('createSummary normal mode goldens (byte-identical regression pin)', ()
 			500,
 		);
 		expect(result).toBe(
-			'[SUMMARY test-1] 33 B | text | 3 lines\nfirst line\nsecond line\nthird line\n→ Use /swarm retrieve test-1 for full content',
+			'[SUMMARY test-1] 33 B | text | 3 lines\nfirst line\nsecond line\nthird line\n→ Use retrieve_summary test-1 for full output',
 		);
 	});
 
@@ -369,7 +371,42 @@ describe('createSummary normal mode goldens (byte-identical regression pin)', ()
 			500,
 		);
 		expect(result).toBe(
-			'[SUMMARY test-1] 7 B | json | 1 lines\n{ a: number }\n→ Use /swarm retrieve test-1 for full content',
+			'[SUMMARY test-1] 7 B | json | 1 lines\n{ a: number }\n→ Use retrieve_summary test-1 for full output',
 		);
+	});
+});
+
+describe('createSummary footer budget (schema-minimum cap)', () => {
+	test('normal-mode summary of a large JSON output with a 5-digit id fits max_summary_chars = 100', () => {
+		// The retrieve_summary footer must not be longer than the legacy
+		// `/swarm retrieve` footer: at the schema-minimum cap of 100 a longer
+		// footer pushed the total past the cap.
+		const big = JSON.stringify(
+			{ matches: Array.from({ length: 4000 }, (_, i) => ({ n: i })) },
+			null,
+			2,
+		);
+		const result = createSummary(big, 'search', 'S12345', 100);
+		const lines = result.split('\n');
+		expect(lines[lines.length - 1]).toBe(
+			'→ Use retrieve_summary S12345 for full output',
+		);
+		expect(Buffer.byteLength(result, 'utf8')).toBeLessThanOrEqual(100);
+	});
+
+	test('retrieve_summary footers are no longer than the legacy footer', () => {
+		const legacy = Buffer.byteLength(
+			'→ Use /swarm retrieve S1 for full content',
+			'utf8',
+		);
+		const normal = createSummary('x', 'bash', 'S1', 500).split('\n').pop()!;
+		const partial = createSummary('x', 'bash', 'S1', 500, { partial: true })
+			.split('\n')
+			.pop()!;
+		expect(Buffer.byteLength(normal, 'utf8')).toBeLessThanOrEqual(legacy);
+		// Partial mode did not exist in the legacy format; it carries a longer
+		// header, so its footer is held to the same bound plus the 5-byte slack
+		// its wording needs.
+		expect(Buffer.byteLength(partial, 'utf8')).toBeLessThanOrEqual(legacy + 5);
 	});
 });

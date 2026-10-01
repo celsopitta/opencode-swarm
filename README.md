@@ -1122,11 +1122,13 @@ Control the size of tool outputs that are sent back to the LLM.
 - **max_lines** – Default line limit for any tool output.
 - **per_tool** – Overrides `max_lines` for specific tools. The `diff` and `symbols` tools are truncated by default because their outputs can be very large.
 
-When truncation is active, a footer is appended:
+When truncation is active, the middle of the output is dropped and a footer is appended:
 
 ```
----
-[output truncated to {maxLines} lines – use `tool_output.per_tool.<tool>` to adjust]
+
+[... 42 lines omitted ...]
+Tool: diff
+Omitted lines have no summary id; re-run with a narrower scope to see them
 ```
 
 ## Summarization Settings
@@ -1136,7 +1138,7 @@ Control how tool outputs are summarized for LLM context.
 ```json
 {
   "summaries": {
-    "threshold_bytes": 102400,
+    "threshold_bytes": 16384,
     "exempt_tools": [
       "retrieve_summary",
       "retrieve_lane_output",
@@ -1145,14 +1147,17 @@ Control how tool outputs are summarized for LLM context.
       "dispatch_lanes",
       "dispatch_lanes_async",
       "collect_lane_results",
-      "parse_lane_candidates"
+      "parse_lane_candidates",
+      "skill"
     ]
   }
 }
 ```
 
-- **threshold_bytes** – Output size threshold in bytes before summarization is triggered (default 102400 = 100KB).
-- **exempt_tools** – Tools whose outputs are never summarized. Defaults to `["retrieve_summary", "retrieve_lane_output", "task", "read", "dispatch_lanes", "dispatch_lanes_async", "collect_lane_results", "parse_lane_candidates"]`. Retrieval and lane tools are always exempt—summarizing them would destroy the references needed to recover their full outputs.
+- **threshold_bytes** – Output size threshold in bytes (default 16384 = 16KB). Summarization triggers at 1.25× this value, so about 20KB by default.
+- **exempt_tools** – Tools whose outputs are never summarized. Defaults to `["retrieve_summary", "retrieve_lane_output", "task", "read", "dispatch_lanes", "dispatch_lanes_async", "collect_lane_results", "parse_lane_candidates", "skill"]`. Retrieval and lane tools are always exempt—summarizing them would destroy the references needed to recover their full outputs. `skill` and `read` are exempt because skill files are instructions an agent must read in full.
+
+A summarized output is replaced by a `[SUMMARY Sx]` stub whose footer names the `retrieve_summary` tool. The output is stored under `.swarm/summaries/`, not lost. When OpenCode itself already truncated the output (over about 50KB or 2,000 lines), the summarizer stores the full copy OpenCode saved; if that copy cannot be used (missing, too large to store or retrieve, or not matching the text OpenCode returned), the stub header is marked `partial`. When the saved copy is recovered, anything OpenCode attached to the result that the copy lacks, such as a command-timeout notice, is kept on a `[host notes on this result]` line above the footer.
 
 > **Note:** The `retrieve_summary` tool supports paginated retrieval via `offset` and `limit` parameters to fetch large summarized outputs in chunks.
 

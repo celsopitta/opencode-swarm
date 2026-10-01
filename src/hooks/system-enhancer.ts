@@ -1604,7 +1604,7 @@ ${sanitizeContextText(scopedHandoff.body)}`;
 
 						// Priority 5 (lowest): Summarization awareness
 						tryInject(
-							'[SWARM HINT] Large tool outputs may be auto-summarized. Use /swarm retrieve <id> to get the full content if needed.',
+							'[SWARM HINT] Large tool outputs may be replaced by a [SUMMARY Sx] stub. The output is stored, not lost (a stub marked partial holds only the part the host returned): call the retrieve_summary tool with that id (page with offset/limit) to read it.',
 						);
 
 						// v6.0: Security review override

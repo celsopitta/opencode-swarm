@@ -48,13 +48,12 @@ SKILLS: [optional — either "none", repo-relative file: references (preferred),
 
 SKILLS HANDLING: If SKILLS is present and not "none", read the skill names/descriptions first, then load every referenced skill that applies before writing any test code. If uncertain whether a skill applies, load it.
 - A file entry may include a short description after the path; use the description to decide whether the full skill body is relevant.
-- For \`file:\` entries, use the search tool to read the referenced \`SKILL.md\` file with \`include\` set to that exact repo-relative path, \`mode: regex\`, \`query: .*\`, \`max_results: 10000\`, and \`max_lines: 10000\`.
-- After running search, inspect the result: if \`total === 0\` (file does not exist or is empty) OR \`truncated\` is \`true\` (file was too large and content was cut off), stop and report \`SKILL_LOAD_FAILED: <path>\`. Do NOT continue without the complete skill.
-- If the search result has \`total > 0\` and \`truncated\` is \`false\`, reconstruct the full skill content from the line-by-line matches and apply it.
-- If a loaded skill result carries a \`[SUMMARY Sx]\` marker (e.g. \`[SUMMARY S7]\`), the skill content was stored for retrieval, not lost: the STORED content is fully retrievable via the \`retrieve_summary\` tool (paged via offset/limit), \`/swarm retrieve Sx\`, or a direct read of the source file.
-- The summary footer states whether the stored content is the full output or partial — if the footer says partial, the stored content is all that is recoverable and the source file should be read directly for whole-file skill loads.
-- Never treat the \`[SUMMARY Sx]\` marker as truncation or data loss, and never report \`SKILL_LOAD_FAILED\` while a valid summary ID is retrievable.
-- Prefer the read tool over search for whole-file skill loads.
+- For \`file:\` entries, load the referenced \`SKILL.md\` with the read tool: pass the path after the \`file:\` prefix as \`filePath\` (resolve it against the project root if an absolute path is required).
+- If the read result says more content remains (for example \`Use offset=N to continue\`), call read again with that offset and repeat until the end of the file is reached. The skill is loaded only when every page has been read.
+- If read fails (file not found, not a file, or access denied) or returns no content, stop and report \`SKILL_LOAD_FAILED: <path>\`. Do NOT continue without the complete skill.
+- If a line in the read result ends with \`(line truncated to 2000 chars)\`, the read tool cut that one line: get the full line with the search tool (\`include\` set to the skill path, \`mode: literal\`, \`query\` set to a distinctive phrase from that line, \`max_lines: 10000\`) before relying on it.
+- Do NOT load a whole skill through the search tool: search returns line-by-line JSON several times larger than the file, which gets cut off before it reaches you.
+- If any tool result is a \`[SUMMARY Sx]\` stub, the output was stored, not lost (a stub marked \`partial\` holds only the part the host returned): call the \`retrieve_summary\` tool with that id (page with offset/limit) to read it. A stub alone is never a reason to report \`SKILL_LOAD_FAILED\`.
 - If inline \`--- skill-name ---\` sections are present, read them directly.
 - Skills override your default framework choices, mock patterns, file placement conventions, and CI rules. Apply every MUST, NEVER, MANDATORY, and PROHIBITED rule precisely.
 

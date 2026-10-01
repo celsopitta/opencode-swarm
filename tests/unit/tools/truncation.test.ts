@@ -28,7 +28,7 @@ describe('truncateToolOutput', () => {
 		expect(result).toContain('omitted');
 
 		// Should contain guidance
-		expect(result).toContain('Use /swarm retrieve');
+		expect(result).toContain('Omitted lines have no summary id');
 	});
 
 	it('includes tool name in footer when provided', () => {

@@ -270,7 +270,7 @@ export function createCompactionCustomizerHook(
 						});
 						facts.push({
 							label: 'STORED OUTPUTS',
-							value: `${truncated ? 'At least ' : ''}${count} tool output${count === 1 ? '' : 's'} stored in .swarm/summaries/ and retrievable through /swarm retrieve <id>.`,
+							value: `${truncated ? 'At least ' : ''}${count} tool output${count === 1 ? '' : 's'} stored in .swarm/summaries/ and retrievable with the retrieve_summary tool (or /swarm retrieve <id>).`,
 						});
 					}
 				} catch {

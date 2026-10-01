@@ -674,11 +674,13 @@ Controls the size of tool outputs sent back to the LLM.
 - **max_lines** – Default line limit for any tool output.
 - **per_tool** – Overrides `max_lines` for specific tools. `diff`, `symbols`, `search`, and `batch_symbols` are truncated by default because their outputs can be very large. `suggest_patch` uses a conservative limit since patch output is typically compact.
 
-When truncation is active, a footer is appended to the output:
+When truncation is active, the middle of the output is dropped and a footer is appended:
 
 ```
----
-[output truncated to {maxLines} lines – use `tool_output.per_tool.<tool>` to adjust]
+
+[... 42 lines omitted ...]
+Tool: diff
+Omitted lines have no summary id; re-run with a narrower scope to see them
 ```
 
 ### Structured Search Tool — `search` (v6.45.0)

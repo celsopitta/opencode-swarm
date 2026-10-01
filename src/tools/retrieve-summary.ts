@@ -1,14 +1,15 @@
 import type { ToolContext } from '@opencode-ai/plugin';
 import { z } from 'zod';
 import { loadFullOutput, sanitizeSummaryId } from '../summaries/manager';
+import { MAX_RETRIEVABLE_SUMMARY_BYTES } from '../summaries/summarizer';
 import { createSwarmTool } from './create-tool';
 
-const RETRIEVE_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const RETRIEVE_MAX_BYTES = MAX_RETRIEVABLE_SUMMARY_BYTES;
 
 export const retrieve_summary: ReturnType<typeof createSwarmTool> =
 	createSwarmTool({
 		description:
-			'Retrieve the full content of a stored tool output summary by its ID (e.g. S1, S2). Use this when a prior tool output was summarized and you need the full content.',
+			'Retrieve the stored content behind a [SUMMARY Sx] stub by its ID (e.g. S1, S2). A stub means the tool output was stored, not truncated or lost: call this with the ID from the stub header and page with offset/limit (max 500 lines per call) until the range header shows the last line. If the stub header is marked "partial", the host cut the output before it could be stored and only that part is retrievable here.',
 		args: {
 			id: z
 				.string()

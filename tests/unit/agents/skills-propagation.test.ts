@@ -6,6 +6,8 @@
  * 2. Architect's DELEGATION FORMAT includes a SKILLS field
  * 3. Subagent prompts (coder, reviewer, test_engineer, sme) include SKILLS
  *    field in their INPUT FORMAT and SKILLS HANDLING instructions
+ * 4. Every skill-loading block loads SKILL.md through the paged host read
+ *    tool (never search) and keeps the [SUMMARY Sx] retrieval branch
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -16,7 +18,10 @@ import { createDocsAgent } from '../../../src/agents/docs';
 import { createReviewerAgent } from '../../../src/agents/reviewer';
 import { createSMEAgent } from '../../../src/agents/sme';
 import { createTestEngineerAgent } from '../../../src/agents/test-engineer';
-import { AGENT_TOOL_MAP } from '../../../src/config/constants';
+import {
+	AGENT_TOOL_MAP,
+	SUMMARIZER_EXEMPT_TOOL_NAMES,
+} from '../../../src/config/constants';
 
 describe('Skills Propagation to Subagents', () => {
 	describe('Architect Prompt — SKILLS PROPAGATION section', () => {
@@ -182,96 +187,117 @@ describe('Skills Propagation to Subagents', () => {
 		});
 	});
 
-	describe('Coder Prompt — SKILLS field in INPUT FORMAT', () => {
-		const prompt = createCoderAgent('test-model').config.prompt!;
+	// Every prompt variant that carries a skill-loading block.
+	const docsPrompt = (role: 'standard' | 'design_docs') => () =>
+		createDocsAgent('test-model', undefined, undefined, role).config.prompt!;
+	const skillLoadingPrompts: Array<[string, () => string]> = [
+		['architect', () => createArchitectAgent('test-model').config.prompt!],
+		['coder', () => createCoderAgent('test-model').config.prompt!],
+		['reviewer', () => createReviewerAgent('test-model').config.prompt!],
+		[
+			'test_engineer',
+			() => createTestEngineerAgent('test-model').config.prompt!,
+		],
+		['sme', () => createSMEAgent('test-model').config.prompt!],
+		['docs (standard)', docsPrompt('standard')],
+		['docs (design_docs)', docsPrompt('design_docs')],
+		['designer', () => createDesignerAgent('test-model').config.prompt!],
+	];
 
-		it('INPUT FORMAT contains SKILLS field', () => {
-			const inputSection = prompt.slice(prompt.indexOf('INPUT FORMAT'));
-			expect(inputSection).toContain('SKILLS:');
-			expect(inputSection).toContain('file: references');
+	// The skill-loading block: from the first SKILL LOADING / SKILLS HANDLING
+	// header to the blank line that closes that bullet list. Assertions are
+	// anchored to it so wording elsewhere in the prompt cannot satisfy them.
+	const skillBlock = (prompt: string): string => {
+		const headerIdx = ['SKILL LOADING', 'SKILLS HANDLING']
+			.map((h) => prompt.indexOf(h))
+			.filter((i) => i >= 0)
+			.sort((a, b) => a - b)[0];
+		expect(headerIdx).toBeGreaterThanOrEqual(0);
+		const end = prompt.indexOf('\n\n', headerIdx);
+		return prompt.slice(headerIdx, end === -1 ? undefined : end);
+	};
+
+	// Per-subagent expectations. `phrases` are asserted against the text from
+	// the SKILLS HANDLING header onward, in addition to the shared ones.
+	const sharedHandlingPhrases = [
+		'read the skill names/descriptions first',
+		'load every referenced skill that applies',
+		'with the read tool',
+		'SKILL_LOAD_FAILED',
+	];
+	const subagents: Array<{
+		label: string;
+		getPrompt: () => string;
+		inputHeader: string;
+		phrases: string[];
+	}> = [
+		{
+			label: 'Coder',
+			getPrompt: () => createCoderAgent('test-model').config.prompt!,
+			inputHeader: 'INPUT FORMAT',
+			phrases: ['before writing any code', 'supplement and extend'],
+		},
+		{
+			label: 'Reviewer',
+			getPrompt: () => createReviewerAgent('test-model').config.prompt!,
+			inputHeader: '## INPUT FORMAT',
+			phrases: ['before beginning', 'Flag any violation'],
+		},
+		{
+			label: 'Test Engineer',
+			getPrompt: () => createTestEngineerAgent('test-model').config.prompt!,
+			inputHeader: 'INPUT FORMAT',
+			phrases: [
+				'before writing any test code',
+				'override your default framework choices',
+			],
+		},
+		{
+			label: 'SME',
+			getPrompt: () => createSMEAgent('test-model').config.prompt!,
+			inputHeader: '## INPUT FORMAT',
+			phrases: ['before formulating'],
+		},
+		{
+			label: 'Docs',
+			getPrompt: () => createDocsAgent('test-model').config.prompt!,
+			inputHeader: 'INPUT FORMAT',
+			phrases: [],
+		},
+		{
+			label: 'Designer',
+			getPrompt: () => createDesignerAgent('test-model').config.prompt!,
+			inputHeader: 'INPUT FORMAT',
+			phrases: [],
+		},
+	];
+
+	for (const { label, getPrompt, inputHeader, phrases } of subagents) {
+		describe(`${label} Prompt — SKILLS field in INPUT FORMAT`, () => {
+			const prompt = getPrompt();
+
+			it('INPUT FORMAT contains SKILLS field', () => {
+				const inputSection = prompt.slice(prompt.indexOf(inputHeader));
+				expect(inputSection).toContain('SKILLS:');
+				expect(inputSection).toContain('file: references');
+			});
+
+			it('contains SKILLS HANDLING instructions', () => {
+				expect(prompt).toContain('SKILLS HANDLING');
+			});
+
+			for (const phrase of [...sharedHandlingPhrases, ...phrases]) {
+				it(`SKILLS HANDLING contains "${phrase}"`, () => {
+					const headerIdx = prompt.indexOf('SKILLS HANDLING');
+					expect(headerIdx).toBeGreaterThanOrEqual(0);
+					expect(prompt.slice(headerIdx)).toContain(phrase);
+				});
+			}
 		});
+	}
 
-		it('contains SKILLS HANDLING instructions', () => {
-			expect(prompt).toContain('SKILLS HANDLING');
-		});
-
-		it('SKILLS HANDLING instructs to load file-based skills before writing code', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain(
-				'read the skill names/descriptions first',
-			);
-			expect(skillsHandling).toContain(
-				'load every referenced skill that applies',
-			);
-			expect(skillsHandling).toContain('use the search tool');
-			expect(skillsHandling).toContain('before writing any code');
-		});
-
-		it('SKILLS HANDLING explains that skills supplement and extend default behavior', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('supplement and extend');
-		});
-
-		it('SKILLS HANDLING checks for total === 0 on search result', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-
-		it('SKILLS HANDLING checks for truncated on search result', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('truncated');
-		});
-
-		it('SKILLS HANDLING fails loudly when a referenced skill cannot be loaded', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('SKILL_LOAD_FAILED');
-		});
-	});
-
-	describe('Reviewer Prompt — SKILLS field in INPUT FORMAT', () => {
+	describe('Reviewer Prompt — sections around SKILLS HANDLING are preserved', () => {
 		const prompt = createReviewerAgent('test-model').config.prompt!;
-
-		it('INPUT FORMAT contains SKILLS field', () => {
-			const inputSection = prompt.slice(prompt.indexOf('## INPUT FORMAT'));
-			expect(inputSection).toContain('SKILLS:');
-			expect(inputSection).toContain('file: references');
-		});
-
-		it('contains SKILLS HANDLING instructions', () => {
-			expect(prompt).toContain('SKILLS HANDLING');
-		});
-
-		it('SKILLS HANDLING instructs to load file-based skills before review', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain(
-				'read the skill names/descriptions first',
-			);
-			expect(skillsHandling).toContain(
-				'load every referenced skill that applies',
-			);
-			expect(skillsHandling).toContain('use the search tool');
-			expect(skillsHandling).toContain('before beginning');
-		});
-
-		it('SKILLS HANDLING states violations should be flagged', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('Flag any violation');
-		});
-
-		it('SKILLS HANDLING fails loudly when a referenced skill cannot be loaded', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('SKILL_LOAD_FAILED');
-		});
-
-		it('SKILLS HANDLING checks for total === 0 on search result', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-
-		it('SKILLS HANDLING checks for truncated on search result', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('truncated');
-		});
 
 		it('PROCESSING line is preserved after SKILLS HANDLING', () => {
 			// PROCESSING was there before; must remain
@@ -287,159 +313,76 @@ describe('Skills Propagation to Subagents', () => {
 		});
 	});
 
-	describe('Test Engineer Prompt — SKILLS field in INPUT FORMAT', () => {
-		const prompt = createTestEngineerAgent('test-model').config.prompt!;
-
-		it('INPUT FORMAT contains SKILLS field', () => {
-			const inputSection = prompt.slice(prompt.indexOf('INPUT FORMAT'));
-			expect(inputSection).toContain('SKILLS:');
-			expect(inputSection).toContain('file: references');
-		});
-
-		it('contains SKILLS HANDLING instructions', () => {
-			expect(prompt).toContain('SKILLS HANDLING');
-		});
-
-		it('SKILLS HANDLING instructs to load file-based skills before writing tests', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain(
-				'read the skill names/descriptions first',
-			);
-			expect(skillsHandling).toContain(
-				'load every referenced skill that applies',
-			);
-			expect(skillsHandling).toContain('use the search tool');
-			expect(skillsHandling).toContain('before writing any test code');
-		});
-
-		it('SKILLS HANDLING explains skills override default framework choices', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain(
-				'override your default framework choices',
-			);
-		});
-
-		it('SKILLS HANDLING fails loudly when a referenced skill cannot be loaded', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('SKILL_LOAD_FAILED');
-		});
-
-		it('SKILLS HANDLING checks for truncated on search result', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('truncated');
-		});
+	describe('Skill-loading protocol uses the paged read tool, not search', () => {
+		for (const [label, getPrompt] of skillLoadingPrompts) {
+			it(`${label} skill-loading block loads skills through read`, () => {
+				const block = skillBlock(getPrompt());
+				expect(block).toContain(
+					label === 'architect' ? 'using the read tool' : 'with the read tool',
+				);
+				// Paging: the skill is loaded only once every page has been read.
+				expect(block).toContain('Use offset=N to continue');
+				expect(block).toContain('every page has been read');
+				expect(block).toContain('SKILL_LOAD_FAILED');
+				// The host read tool cuts lines over 2000 chars with no way to
+				// continue them: the block must say how to get such a line in full.
+				expect(block).toContain('(line truncated to 2000 chars)');
+				expect(block).toContain('get the full line with the search tool');
+				expect(block).toContain('max_lines: 10000');
+				expect(block).toContain(
+					'Do NOT load a whole skill through the search tool',
+				);
+				// The removed search-based protocol must not come back.
+				expect(block).not.toContain('total === 0');
+				expect(block).not.toContain('max_results');
+				expect(block).not.toContain('query: .*');
+			});
+		}
 	});
 
-	describe('SME Prompt — SKILLS field in INPUT FORMAT', () => {
-		const prompt = createSMEAgent('test-model').config.prompt!;
-
-		it('INPUT FORMAT contains SKILLS field', () => {
-			const inputSection = prompt.slice(prompt.indexOf('## INPUT FORMAT'));
-			expect(inputSection).toContain('SKILLS:');
-			expect(inputSection).toContain('file: references');
+	describe('Skill-loading agents can use the tools the protocol names', () => {
+		// Skills load through the host read tool, which must never be stubbed by the summarizer.
+		it('SUMMARIZER_EXEMPT_TOOL_NAMES contains read', () => {
+			expect(SUMMARIZER_EXEMPT_TOOL_NAMES).toContain('read');
 		});
 
-		it('contains SKILLS HANDLING instructions', () => {
-			expect(prompt).toContain('SKILLS HANDLING');
+		// The protocol's over-long-line fallback is a single targeted search
+		// call and its stub branch is retrieve_summary: every skill-loading role
+		// must hold both plugin tools.
+		it('architect and every skill-loading agent hold search and retrieve_summary', () => {
+			for (const role of [
+				'architect',
+				'coder',
+				'reviewer',
+				'test_engineer',
+				'sme',
+				'docs',
+				'docs_design',
+				'designer',
+			] as const) {
+				expect(AGENT_TOOL_MAP[role]).toContain('search');
+				expect(AGENT_TOOL_MAP[role]).toContain('retrieve_summary');
+			}
 		});
 
-		it('SKILLS HANDLING instructs to load file-based skills before recommendation', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain(
-				'read the skill names/descriptions first',
-			);
-			expect(skillsHandling).toContain(
-				'load every referenced skill that applies',
-			);
-			expect(skillsHandling).toContain('use the search tool');
-			expect(skillsHandling).toContain('before formulating');
-		});
-
-		it('SKILLS HANDLING fails loudly when a referenced skill cannot be loaded', () => {
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('SKILL_LOAD_FAILED');
-		});
-	});
-
-	describe('Docs Prompt — SKILLS field in INPUT FORMAT', () => {
-		const prompt = createDocsAgent('test-model').config.prompt!;
-
-		it('INPUT FORMAT contains SKILLS field', () => {
-			const inputSection = prompt.slice(prompt.indexOf('INPUT FORMAT'));
-			expect(inputSection).toContain('SKILLS:');
-			expect(inputSection).toContain('file: references');
-		});
-
-		it('contains SKILLS HANDLING instructions', () => {
-			expect(prompt).toContain('SKILLS HANDLING');
-			expect(prompt).toContain('use the search tool');
-			expect(prompt).toContain('SKILL_LOAD_FAILED');
-		});
-	});
-
-	describe('Designer Prompt — SKILLS field in INPUT FORMAT', () => {
-		const prompt = createDesignerAgent('test-model').config.prompt!;
-
-		it('INPUT FORMAT contains SKILLS field', () => {
-			const inputSection = prompt.slice(prompt.indexOf('INPUT FORMAT'));
-			expect(inputSection).toContain('SKILLS:');
-			expect(inputSection).toContain('file: references');
-		});
-
-		it('contains SKILLS HANDLING instructions', () => {
-			expect(prompt).toContain('SKILLS HANDLING');
-			expect(prompt).toContain('use the search tool');
-			expect(prompt).toContain('SKILL_LOAD_FAILED');
-		});
-	});
-
-	describe('All 6 agent SKILLS HANDLING blocks check total === 0', () => {
-		it('coder SKILLS HANDLING contains total === 0', () => {
-			const prompt = createCoderAgent('test-model').config.prompt!;
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-
-		it('reviewer SKILLS HANDLING contains total === 0', () => {
-			const prompt = createReviewerAgent('test-model').config.prompt!;
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-
-		it('test_engineer SKILLS HANDLING contains total === 0', () => {
-			const prompt = createTestEngineerAgent('test-model').config.prompt!;
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-
-		it('sme SKILLS HANDLING contains total === 0', () => {
-			const prompt = createSMEAgent('test-model').config.prompt!;
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-
-		it('docs SKILLS HANDLING contains total === 0', () => {
-			const prompt = createDocsAgent('test-model').config.prompt!;
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-
-		it('designer SKILLS HANDLING contains total === 0', () => {
-			const prompt = createDesignerAgent('test-model').config.prompt!;
-			const skillsHandling = prompt.slice(prompt.indexOf('SKILLS HANDLING'));
-			expect(skillsHandling).toContain('total === 0');
-		});
-	});
-
-	describe('Skill-loading agents have a tool capable of reading file-based skills', () => {
-		it('architect and every skill-loading agent include search', () => {
-			expect(AGENT_TOOL_MAP.architect).toContain('search');
-			expect(AGENT_TOOL_MAP.coder).toContain('search');
-			expect(AGENT_TOOL_MAP.reviewer).toContain('search');
-			expect(AGENT_TOOL_MAP.test_engineer).toContain('search');
-			expect(AGENT_TOOL_MAP.sme).toContain('search');
-			expect(AGENT_TOOL_MAP.docs).toContain('search');
-			expect(AGENT_TOOL_MAP.designer).toContain('search');
+		// read is a host built-in outside AGENT_TOOL_MAP: it stays available
+		// unless an agent factory switches it off, so no skill-loading factory
+		// may do that.
+		it('no skill-loading agent factory disables the host read tool', () => {
+			const factories = [
+				createArchitectAgent('test-model'),
+				createCoderAgent('test-model'),
+				createReviewerAgent('test-model'),
+				createTestEngineerAgent('test-model'),
+				createSMEAgent('test-model'),
+				createDocsAgent('test-model', undefined, undefined, 'standard'),
+				createDocsAgent('test-model', undefined, undefined, 'design_docs'),
+				createDesignerAgent('test-model'),
+			];
+			for (const agent of factories) {
+				const tools = (agent.config.tools ?? {}) as Record<string, boolean>;
+				expect(tools.read).not.toBe(false);
+			}
 		});
 	});
 
@@ -447,75 +390,34 @@ describe('Skills Propagation to Subagents', () => {
 		// Distinctive once-per-branch phrase; kept backtick-free so the assertion
 		// matches the rendered prompt regardless of the source's escaped-backtick
 		// convention.
-		const marker = 'the skill content was stored for retrieval, not lost';
-		const entries: Array<[string, () => string]> = [
-			['architect', () => createArchitectAgent('test-model').config.prompt!],
-			['coder', () => createCoderAgent('test-model').config.prompt!],
-			['reviewer', () => createReviewerAgent('test-model').config.prompt!],
-			[
-				'test_engineer',
-				() => createTestEngineerAgent('test-model').config.prompt!,
-			],
-			['sme', () => createSMEAgent('test-model').config.prompt!],
-			[
-				'docs (standard)',
-				() =>
-					createDocsAgent('test-model', undefined, undefined, 'standard').config
-						.prompt!,
-			],
-			[
-				'docs (design_docs)',
-				() =>
-					createDocsAgent('test-model', undefined, undefined, 'design_docs')
-						.config.prompt!,
-			],
-			['designer', () => createDesignerAgent('test-model').config.prompt!],
-		];
+		const marker = 'the output was stored, not lost';
+		const countMarker = (prompt: string) => prompt.split(marker).length - 1;
 
-		for (const [label, getPrompt] of entries) {
+		for (const [label, getPrompt] of skillLoadingPrompts) {
 			it(`${label} skill-loading block carries the [SUMMARY Sx] branch`, () => {
 				const prompt = getPrompt();
-				// The branch lives in the SKILL LOADING / SKILLS HANDLING block.
-				const headerIdx = ['SKILL LOADING', 'SKILLS HANDLING']
-					.map((h) => prompt.indexOf(h))
-					.filter((i) => i >= 0)
-					.sort((a, b) => a - b)[0];
-				expect(headerIdx).toBeGreaterThanOrEqual(0);
-				expect(prompt.indexOf(marker)).toBeGreaterThan(headerIdx);
-				// The branch acknowledges the partial-footer state.
-				expect(prompt).toContain('partial');
-				expect(prompt).toContain(
-					'the stored content is all that is recoverable',
-				);
-				// The branch names the retrieval paths.
-				expect(prompt).toContain('retrieve_summary');
-				expect(prompt).toContain('/swarm retrieve');
-				expect(prompt).toContain('direct read of the source file');
+				const block = skillBlock(prompt);
+				expect(block).toContain(marker);
+				// The branch names the retrieval tool and forbids treating a stub
+				// as a load failure.
+				expect(block).toContain('retrieve_summary');
+				expect(block).toContain('A stub alone is never a reason to report');
+				// A partial stub holds less than the full output; the branch says so.
+				expect(block).toContain('holds only the part the host returned');
+				// The slash-command path is not offered to agents.
+				expect(prompt).not.toContain('/swarm retrieve Sx');
 			});
 		}
 
 		it('reviewer carries the branch exactly once (primary block only)', () => {
 			expect(
-				createReviewerAgent('test-model').config.prompt!.split(marker).length -
-					1,
+				countMarker(createReviewerAgent('test-model').config.prompt!),
 			).toBe(1);
 		});
 
 		it('docs carries the branch in BOTH blocks (one per role)', () => {
-			const standard = createDocsAgent(
-				'test-model',
-				undefined,
-				undefined,
-				'standard',
-			).config.prompt!;
-			const design = createDocsAgent(
-				'test-model',
-				undefined,
-				undefined,
-				'design_docs',
-			).config.prompt!;
-			expect(standard.split(marker).length - 1).toBe(1);
-			expect(design.split(marker).length - 1).toBe(1);
+			expect(countMarker(docsPrompt('standard')())).toBe(1);
+			expect(countMarker(docsPrompt('design_docs')())).toBe(1);
 		});
 	});
 });

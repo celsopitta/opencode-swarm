@@ -903,15 +903,13 @@ Every loaded mode skill is written with active-swarm role phrases. Before follow
 Do not delegate to the literal natural-language phrase. Delegate only to the concrete rendered agent name for the active swarm.
 
 ### SKILL LOADING (self-load protocol for MODE actions)
-When a MODE section says "ACTION: Load skill file:<path>", load the skill yourself using the search tool:
-- Strip the \`file:\` prefix to get the repo-relative path.
-- Call the search tool with \`include\` set to that exact repo-relative path, \`mode: regex\`, \`query: .*\`, \`max_results: 10000\`, and \`max_lines: 10000\`.
-- If \`total === 0\` (file does not exist or is empty) OR \`truncated\` is \`true\` (the file exceeded even \`max_results: 10000\`), report \`SKILL_LOAD_FAILED: <path>\`, stop, and ask the user how to proceed. Do NOT continue without the complete skill and do NOT substitute a partial or improvised protocol.
-- If the search result has \`total > 0\` and \`truncated\` is \`false\`, reconstruct the full skill content from the line-by-line matches and follow the loaded protocol.
-- If a loaded skill result carries a \`[SUMMARY Sx]\` marker (e.g. \`[SUMMARY S7]\`), the skill content was stored for retrieval, not lost: the STORED content is fully retrievable via the \`retrieve_summary\` tool (paged via offset/limit), \`/swarm retrieve Sx\`, or a direct read of the source file.
-- The summary footer states whether the stored content is the full output or partial — if the footer says partial, the stored content is all that is recoverable and the source file should be read directly for whole-file skill loads.
-- Never treat the \`[SUMMARY Sx]\` marker as truncation or data loss, and never report \`SKILL_LOAD_FAILED\` while a valid summary ID is retrievable.
-- Prefer the read tool over search for whole-file skill loads.
+When a MODE section says "ACTION: Load skill file:<path>", load the skill yourself using the read tool:
+- Strip the \`file:\` prefix to get the repo-relative path and pass it to the read tool as \`filePath\` (resolve it against the project root if an absolute path is required).
+- If the read result says more content remains (for example \`Use offset=N to continue\`), call read again with that offset and repeat until the end of the file is reached. The skill is loaded only when every page has been read.
+- If read fails (file not found, not a file, or access denied) or returns no content, report \`SKILL_LOAD_FAILED: <path>\`, stop, and ask the user how to proceed. Do NOT continue without the complete skill and do NOT substitute a partial or improvised protocol.
+- If a line in the read result ends with \`(line truncated to 2000 chars)\`, the read tool cut that one line: get the full line with the search tool (\`include\` set to the skill path, \`mode: literal\`, \`query\` set to a distinctive phrase from that line, \`max_lines: 10000\`) before relying on it.
+- Do NOT load a whole skill through the search tool: search returns line-by-line JSON several times larger than the file, which gets cut off before it reaches you.
+- If any tool result is a \`[SUMMARY Sx]\` stub, the output was stored, not lost (a stub marked \`partial\` holds only the part the host returned): call the \`retrieve_summary\` tool with that id (page with offset/limit) to read it. A stub alone is never a reason to report \`SKILL_LOAD_FAILED\`.
 
 ### MODE: BRAINSTORM
 Activates when: user invokes /swarm brainstorm, uses brainstorm-style phrasing, or the problem is exploratory and requirements need structured dialogue.

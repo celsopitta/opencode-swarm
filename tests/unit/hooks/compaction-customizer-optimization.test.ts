@@ -45,7 +45,9 @@ describe('compaction stored-output facts', () => {
 
 		expect(block).toContain('[CONTEXT OPTIMIZATION STATE]');
 		expect(block).toContain('[STORED OUTPUTS]\n2 tool outputs');
-		expect(block).toContain('retrievable through /swarm retrieve <id>');
+		expect(block).toContain(
+			'retrievable with the retrieve_summary tool (or /swarm retrieve <id>)',
+		);
 	});
 
 	it('uses singular grammar for one stored output', async () => {

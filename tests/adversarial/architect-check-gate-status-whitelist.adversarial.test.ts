@@ -80,7 +80,7 @@ describe('ADVERSARIAL: Architect whitelist check_gate_status', () => {
 	});
 
 	describe('ACCIDENTAL MUTATION: other role tool lists must remain unchanged', () => {
-		it('explorer should retain expected 14 tools', () => {
+		it('explorer should retain expected 15 tools', () => {
 			const expected = [
 				'complexity_hotspots',
 				'schema_drift',
@@ -88,6 +88,7 @@ describe('ADVERSARIAL: Architect whitelist check_gate_status', () => {
 				'detect_domains',
 				'git_blame',
 				'gitingest',
+				'retrieve_summary',
 				'doc_scan',
 				'knowledge_recall',
 				'search',

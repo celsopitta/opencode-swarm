@@ -204,3 +204,19 @@ describe('AGENT_TOOL_MAP', () => {
 		]);
 	});
 });
+
+describe('AGENT_TOOL_MAP summary retrieval parity', () => {
+	it('every agent that holds search also holds retrieve_summary', () => {
+		// The [SUMMARY Sx] stub footer names retrieve_summary as the retrieval
+		// path, and search is the largest stub producer: an agent holding search
+		// without retrieve_summary receives stubs it can never expand.
+		const missing = Object.entries(AGENT_TOOL_MAP)
+			.filter(
+				([, tools]) =>
+					tools.includes('search') && !tools.includes('retrieve_summary'),
+			)
+			.map(([role]) => role)
+			.sort();
+		expect(missing).toEqual([]);
+	});
+});

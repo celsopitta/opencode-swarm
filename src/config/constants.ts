@@ -421,7 +421,7 @@ export type WriteToolName = (typeof WRITE_TOOL_NAMES)[number];
 /**
  * Single source of truth for tools that must NEVER have their output rewritten
  * by the tool-output summarizer (tool-summarizer.ts) or the context-budget
- * tool-output masker (context-budget.ts). Two independent admission reasons:
+ * tool-output masker (context-budget.ts). Three independent admission reasons:
  *
  *   (a) Retrieval tools (`retrieve_summary`, `retrieve_lane_output`, `task`,
  *       `read`) — rewriting their output would destroy the recovery mechanism
@@ -433,6 +433,11 @@ export type WriteToolName = (typeof WRITE_TOOL_NAMES)[number];
  *       the PR-workflow gate requires to settle lanes. Rewriting them to a
  *       type-signature summary destroys the rows and the refs, so the gate
  *       can never settle and the model cannot recover.
+ *   (c) Instruction-carrying loads (the host `skill` tool, and `read`, which
+ *       the skill-loading protocol uses for `file:` skill references) — a
+ *       skill is instructions the agent must read in full, so a summary stub
+ *       saves nothing: the agent either pages the whole content back or
+ *       proceeds without the skill.
  *
  * This list is a FLOOR, not a default: every consumer must treat these tool
  * names as always exempt regardless of operator-supplied `exempt_tools`
@@ -448,6 +453,7 @@ export const SUMMARIZER_EXEMPT_TOOL_NAMES = [
 	'dispatch_lanes_async',
 	'collect_lane_results',
 	'parse_lane_candidates',
+	'skill',
 ] as const;
 
 // Default models for each agent/category

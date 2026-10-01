@@ -87,7 +87,7 @@ describe('tool-summarizer', () => {
 		// Output should be changed to a summary
 		expect(output.output).not.toBe(largeOutput);
 		expect(output.output).toContain('[SUMMARY S1]');
-		expect(output.output).toContain('→ Use /swarm retrieve S1');
+		expect(output.output).toContain('→ Use retrieve_summary S1');
 
 		// Verify file exists on disk
 		const summaryFile = join(tempDir, '.swarm', 'summaries', 'S1.json');
@@ -208,7 +208,7 @@ describe('tool-summarizer integration', () => {
 		// Verify output was replaced with summary
 		expect(output.output).not.toBe(originalOutput);
 		expect(output.output).toContain('[SUMMARY S1]');
-		expect(output.output).toContain('→ Use /swarm retrieve S1');
+		expect(output.output).toContain('→ Use retrieve_summary S1');
 
 		// Step 2: Retrieve command returns the original output
 		const retrieved = await handleRetrieveCommand(tempDir, ['S1']);

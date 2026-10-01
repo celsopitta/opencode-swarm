@@ -44,7 +44,12 @@ export function truncateToolOutput(
 		footerLines.push(`Tool: ${toolName}`);
 	}
 
-	footerLines.push('Use /swarm retrieve <id> to get the full content');
+	// Line truncation stores nothing and has no summary id, so the footer must
+	// not point at a summary retrieval path. (It claims only that — the host
+	// may separately have saved a full copy and said so in its own notice.)
+	footerLines.push(
+		'Omitted lines have no summary id; re-run with a narrower scope to see them',
+	);
 
 	return `${headLines.join('\n')}\n${tailContent.join('\n')}\n${footerLines.join('\n')}`;
 }

@@ -90,8 +90,10 @@ describe('truncateToolOutput', () => {
 
 		// output should contain "Tool: diff"
 		expect(result).toContain('Tool: diff');
-		// Should also contain the retrieve guidance
-		expect(result).toContain('Use /swarm retrieve');
+		// The footer must be truthful: line truncation stores nothing, so it
+		// states that instead of pointing at a retrieval path.
+		expect(result).toContain('Omitted lines have no summary id');
+		expect(result).not.toContain('/swarm retrieve');
 	});
 
 	// ============================================================
@@ -163,16 +165,19 @@ describe('truncateToolOutput', () => {
 		});
 
 		test('output containing /swarm retrieve injection attempt', () => {
-			// The input contains the retrieve guidance text, which will be preserved in head
-			// Footer also adds the same text - both appear
+			// The input contains retrieve guidance text, which is preserved in the
+			// head; the footer adds its own (different, truthful) guidance.
 			const output = `line1\nUse /swarm retrieve <id> to get the full content\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12\nline13\nline14\nline15\nline16\nline17\nline18\nline19\nline20`;
 			const result = truncateToolOutput(output, 15, undefined, 10);
 
-			// Should not corrupt - footer adds another occurrence
-			expect(result).toBeDefined();
-			// The footer guidance appears (original text is in head, footer adds it again)
-			expect(result).toContain(
-				'Use /swarm retrieve <id> to get the full content',
+			// Should not corrupt: the injected text stays in the head exactly once
+			// and the real footer is the last line.
+			expect(
+				result.split('Use /swarm retrieve <id> to get the full content')
+					.length - 1,
+			).toBe(1);
+			expect(result.split('\n').pop()).toBe(
+				'Omitted lines have no summary id; re-run with a narrower scope to see them',
 			);
 		});
 	});

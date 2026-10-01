@@ -207,3 +207,17 @@ describe('retrieve_summary pagination', () => {
 		expect(result).not.toContain('more lines');
 	});
 });
+
+describe('retrieve_summary tool description (agent-facing contract)', () => {
+	test('states that a stub means stored-not-lost and how to page it', () => {
+		// The description is the tool contract every holder sees: it must tie the
+		// tool to the [SUMMARY Sx] stub, say the output was stored rather than
+		// truncated, describe paging, and explain the partial marker.
+		const description = (retrieve_summary as { description: string })
+			.description;
+		expect(description).toContain('[SUMMARY Sx] stub');
+		expect(description).toContain('stored, not truncated or lost');
+		expect(description).toContain('offset/limit');
+		expect(description).toContain('"partial"');
+	});
+});

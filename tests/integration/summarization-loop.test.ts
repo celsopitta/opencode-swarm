@@ -320,7 +320,7 @@ describe('summarization loop fix integration', () => {
 		expect(bashOutputObj.output).not.toBe(bashOutput);
 		expect(bashOutputObj.output).toContain('[SUMMARY S1]');
 		expect(bashOutputObj.output).toContain(
-			'Use /swarm retrieve S1 for full content',
+			'Use retrieve_summary S1 for full output',
 		);
 
 		// Verify summary file was created

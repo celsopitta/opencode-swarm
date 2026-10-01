@@ -456,10 +456,15 @@ export const TOOL_METADATA = {
 		},
 	},
 	retrieve_summary: {
-		description: 'retrieve the full content of a stored tool output summary',
+		description:
+			'retrieve the stored content behind a [SUMMARY Sx] stub (paged via offset/limit)',
+		// The [SUMMARY Sx] stub footer names this tool as the retrieval path,
+		// so every agent that holds `search` (the largest stub producer) must
+		// also hold it — otherwise it receives stubs it can never expand.
 		agents: [
 			'architect',
 			'sme',
+			'researcher',
 			'docs',
 			'docs_design',
 			'designer',
@@ -467,10 +472,13 @@ export const TOOL_METADATA = {
 			'critic_drift_verifier',
 			'critic_hallucination_verifier',
 			'critic_architecture_supervisor',
+			'skill_improver',
 			'spec_writer',
 			'reviewer',
 			'critic_finding_validator',
 			'critic',
+			'critic_oversight',
+			'explorer',
 			'coder',
 			'test_engineer',
 		],

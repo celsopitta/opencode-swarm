@@ -1,15 +1,16 @@
 /**
  * Truthful summary recovery — security matrix and real-incident layout.
  *
- * Exercises the recovery guards added to the tool-summarizer hook: a
- * host-truncated output carrying "Full output saved to: <path>" is recovered
- * to the TRUE full artifact only when the artifact is contained under
- * `getHostDataDir()/tool-output`, matches the host `tool_<id>` leaf grammar,
- * and is within `max_stored_bytes`. Every unrecoverable case falls back to a
- * partial-labeled summary that never claims full content.
+ * Exercises the recovery guards in the tool-summarizer hook: when the host
+ * reports truncation through structured metadata (`metadata.truncated` +
+ * `metadata.outputPath`), the TRUE full artifact is recovered only when it is
+ * contained under `getHostDataDir()/tool-output`, matches the host
+ * `tool_<id>` leaf grammar, and is within `max_stored_bytes`. Every
+ * unrecoverable case falls back to a partial-labeled summary that never
+ * claims full content.
  *
- * Kept separate from tool-summarizer.test.ts to respect the FR-006 500-line
- * test-file cap.
+ * The host-signal regressions (quoted notices, missing metadata) live in
+ * tool-summarizer-host-signal.test.ts to respect the FR-006 500-line cap.
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import {
@@ -25,6 +26,7 @@ import type { SummaryConfig } from '../../../src/config/schema';
 import {
 	_internals,
 	createToolSummarizerHook,
+	recoverTruncatedOutput,
 } from '../../../src/hooks/tool-summarizer';
 import { canonicalMkdtemp } from '../../helpers/tmpdir.js';
 
@@ -45,14 +47,16 @@ function input(tool = 'bash') {
 }
 
 /**
- * Build a host-truncated output: a head large enough to trip the summary
- * threshold (1024 * 1.25) followed by the pinned host notice line.
+ * Build a host-truncated tool result as the hook receives it: a head large
+ * enough to trip the summary threshold (1024 * 1.25) followed by the host's
+ * human-readable notice, plus the structured metadata recovery keys on.
  */
-function truncatedOutput(
-	artifactPath: string,
-	head = 'x'.repeat(3000),
-): string {
-	return `TRUNCATED-HEAD\n${head}\nFull output saved to: ${artifactPath}`;
+function hostTruncated(artifactPath: string, head = 'x'.repeat(3000)) {
+	return {
+		title: 't',
+		output: `TRUNCATED-HEAD\n${head}\n\nThe tool call succeeded but the output was truncated. Full output saved to: ${artifactPath}\nUse Grep to search the full content or Read with offset/limit to view specific sections.`,
+		metadata: { truncated: true, outputPath: artifactPath } as unknown,
+	};
 }
 
 function readStoredSummary(id: string): {
@@ -66,15 +70,9 @@ function readStoredSummary(id: string): {
 	};
 }
 
-/** Create a directory symlink; returns false when the platform cannot. */
-function trySymlink(target: string, linkPath: string): boolean {
-	try {
-		symlinkSync(target, linkPath);
-		return true;
-	} catch {
-		return false;
-	}
-}
+// Symlink creation needs elevation (or creates junctions) on Windows, so the
+// two symlink cases are skipped there instead of silently passing.
+const itSymlink = it.skipIf(process.platform === 'win32');
 
 let tempDir: string; // .swarm storage root (the hook `directory` param)
 let dataHome: string; // XDG_DATA_HOME (host artifact location)
@@ -126,18 +124,14 @@ describe('tool-summarizer recovery', () => {
 		const artifact = writeArtifact('tool_abc123', fullContent);
 
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		const output = {
-			title: 't',
-			output: truncatedOutput(artifact),
-			metadata: null,
-		};
+		const output = hostTruncated(artifact);
 
 		await hook(input(), output);
 
 		// Non-partial summary whose header reflects the TRUE full content.
 		expect(output.output).toContain('[SUMMARY S1]');
 		expect(output.output).not.toContain('| partial');
-		expect(output.output).toContain('Use /swarm retrieve S1');
+		expect(output.output).toContain('Use retrieve_summary S1 for full output');
 		expect(output.output).toContain(`| ${expectedLines} lines`);
 
 		// Stored summary carries the true full content + truthful originalBytes.
@@ -154,11 +148,7 @@ describe('tool-summarizer recovery', () => {
 		writeFileSync(evilArtifact, 'SECRET-FULL-CONTENT');
 
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		const output = {
-			title: 't',
-			output: truncatedOutput(evilArtifact),
-			metadata: null,
-		};
+		const output = hostTruncated(evilArtifact);
 		const original = output.output;
 
 		await hook(input(), output);
@@ -167,41 +157,41 @@ describe('tool-summarizer recovery', () => {
 		expect(output.output).toContain('[SUMMARY S1]');
 		expect(output.output).toContain('| partial');
 		expect(output.output).toContain(
-			'partial content stored; full output was not recoverable',
+			'Partial output only; use retrieve_summary S1',
 		);
+		expect(output.output).not.toContain('for full output');
 		const stored = readStoredSummary('S1');
 		expect(stored.fullOutput).toBe(original);
 		expect(stored.fullOutput).not.toBe('SECRET-FULL-CONTENT');
 	});
 
-	it('symlink inside base pointing outside is not recovered → partial', async () => {
-		const base = makeBase();
-		const outsideDir = join(dataHome, 'outside');
-		mkdirSync(outsideDir, { recursive: true });
-		const outsideFile = join(outsideDir, 'tool_outside1');
-		writeFileSync(outsideFile, 'OUTSIDE-SECRET');
-		// A symlink INSIDE the base, grammar-valid name, pointing outside.
-		const link = join(base, 'tool_sym001');
-		if (!trySymlink(outsideFile, link)) return; // symlink unsupported here
+	itSymlink(
+		'symlink inside base pointing outside is not recovered → partial',
+		async () => {
+			const base = makeBase();
+			const outsideDir = join(dataHome, 'outside');
+			mkdirSync(outsideDir, { recursive: true });
+			const outsideFile = join(outsideDir, 'tool_outside1');
+			writeFileSync(outsideFile, 'OUTSIDE-SECRET');
+			// A symlink INSIDE the base, grammar-valid name, pointing outside.
+			const link = join(base, 'tool_sym001');
+			symlinkSync(outsideFile, link);
 
-		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		const output = {
-			title: 't',
-			output: truncatedOutput(link),
-			metadata: null,
-		};
-		const original = output.output;
+			const hook = createToolSummarizerHook(defaultConfig(), tempDir);
+			const output = hostTruncated(link);
+			const original = output.output;
 
-		await hook(input(), output);
+			await hook(input(), output);
 
-		expect(output.output).toContain('[SUMMARY S1]');
-		expect(output.output).toContain('| partial');
-		const stored = readStoredSummary('S1');
-		expect(stored.fullOutput).toBe(original);
-		expect(stored.fullOutput).not.toBe('OUTSIDE-SECRET');
-	});
+			expect(output.output).toContain('[SUMMARY S1]');
+			expect(output.output).toContain('| partial');
+			const stored = readStoredSummary('S1');
+			expect(stored.fullOutput).toBe(original);
+			expect(stored.fullOutput).not.toBe('OUTSIDE-SECRET');
+		},
+	);
 
-	it('symlinked base dir resolves correctly → recovered', async () => {
+	itSymlink('symlinked base dir resolves correctly → recovered', async () => {
 		// Real artifact dir elsewhere; the canonical base is a symlink to it.
 		const realBase = join(dataHome, 'real-data', 'tool-output');
 		mkdirSync(realBase, { recursive: true });
@@ -212,15 +202,11 @@ describe('tool-summarizer recovery', () => {
 		const opencodeDir = join(dataHome, 'opencode');
 		mkdirSync(opencodeDir, { recursive: true });
 		const symlinkedBase = join(opencodeDir, 'tool-output');
-		if (!trySymlink(realBase, symlinkedBase)) return; // symlink unsupported
+		symlinkSync(realBase, symlinkedBase);
 
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		// Notice points at the SYMLINKED base path.
-		const output = {
-			title: 't',
-			output: truncatedOutput(join(symlinkedBase, 'tool_base123')),
-			metadata: null,
-		};
+		// The host-reported path goes through the SYMLINKED base.
+		const output = hostTruncated(join(symlinkedBase, 'tool_base123'));
 
 		await hook(input(), output);
 
@@ -240,11 +226,7 @@ describe('tool-summarizer recovery', () => {
 		const artifact = writeArtifact('tool_xdg1', fullContent);
 
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		const output = {
-			title: 't',
-			output: truncatedOutput(artifact),
-			metadata: null,
-		};
+		const output = hostTruncated(artifact);
 
 		await hook(input(), output);
 
@@ -258,11 +240,7 @@ describe('tool-summarizer recovery', () => {
 		const missingArtifact = join(baseDir(), 'tool_missing1');
 
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		const output = {
-			title: 't',
-			output: truncatedOutput(missingArtifact),
-			metadata: null,
-		};
+		const output = hostTruncated(missingArtifact);
 		const original = output.output;
 
 		await hook(input(), output);
@@ -280,11 +258,7 @@ describe('tool-summarizer recovery', () => {
 			defaultConfig({ max_stored_bytes: 10240 }),
 			tempDir,
 		);
-		const output = {
-			title: 't',
-			output: truncatedOutput(artifact),
-			metadata: null,
-		};
+		const output = hostTruncated(artifact);
 		const original = output.output;
 
 		await hook(input(), output);
@@ -295,10 +269,18 @@ describe('tool-summarizer recovery', () => {
 		const stored = readStoredSummary('S1');
 		expect(stored.fullOutput).toBe(original);
 		expect(stored.fullOutput.length).toBeLessThan(40000);
+		// The raw-size guard itself rejects the artifact before it is read; the
+		// store-size fallback must not be what produces the partial result.
+		expect(
+			recoverTruncatedOutput(
+				{ truncated: true, outputPath: artifact },
+				defaultConfig({ max_stored_bytes: 10240 }),
+			),
+		).toEqual({ kind: 'partial', reason: 'artifact exceeds max_stored_bytes' });
 	});
 
-	it('no host notice → unchanged (full) behavior', async () => {
-		const plainLarge = 'y'.repeat(4000); // no notice
+	it('no host truncation signal → unchanged (full) behavior', async () => {
+		const plainLarge = 'y'.repeat(4000); // host did not truncate
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
 		const output = {
 			title: 't',
@@ -310,7 +292,7 @@ describe('tool-summarizer recovery', () => {
 
 		expect(output.output).toContain('[SUMMARY S1]');
 		expect(output.output).not.toContain('| partial');
-		expect(output.output).toContain('Use /swarm retrieve S1');
+		expect(output.output).toContain('Use retrieve_summary S1 for full output');
 		expect(readStoredSummary('S1').fullOutput).toBe(plainLarge);
 	});
 
@@ -319,11 +301,7 @@ describe('tool-summarizer recovery', () => {
 		const artifact = writeArtifact('tool_storefail', fullContent);
 
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		const output = {
-			title: 't',
-			output: truncatedOutput(artifact),
-			metadata: null,
-		};
+		const output = hostTruncated(artifact);
 		const original = output.output;
 
 		// Stub the storage seam to fail after recovery has already succeeded.
@@ -341,7 +319,7 @@ describe('tool-summarizer recovery', () => {
 		expect(output.output).toBe(original);
 	});
 
-	it('recovers the real incident layout (notice, tool_<id> leaf, ~69KB valid-JSON artifact)', async () => {
+	it('recovers the real incident layout (metadata signal, tool_<id> leaf, ~69KB valid-JSON artifact)', async () => {
 		const artifact = buildIncidentArtifact();
 		const artifactBytes = Buffer.byteLength(artifact, 'utf8');
 		// Comparable size to the real 69,555-byte incident artifact.
@@ -356,23 +334,19 @@ describe('tool-summarizer recovery', () => {
 		expect(parsed.truncated).toBe(false);
 		const expectedLines = artifact.split('\n').length;
 
-		// The real incident leaf name and actual host notice wording.
+		// The real incident leaf name, host notice wording and metadata shape.
 		const artifactPath = writeArtifact(
 			'tool_0ef804c130015O0Ic34t7uabqz',
 			artifact,
 		);
 		const hook = createToolSummarizerHook(defaultConfig(), tempDir);
-		const output = {
-			title: 't',
-			output: truncatedOutput(artifactPath),
-			metadata: null,
-		};
+		const output = hostTruncated(artifactPath);
 
 		await hook(input(), output);
 
 		expect(output.output).toContain('[SUMMARY S1]');
 		expect(output.output).not.toContain('| partial');
-		expect(output.output).toContain('Use /swarm retrieve S1');
+		expect(output.output).toContain('Use retrieve_summary S1 for full output');
 		expect(output.output).toContain(`| ${expectedLines} lines`);
 		const stored = readStoredSummary('S1');
 		expect(stored.fullOutput).toBe(artifact);
