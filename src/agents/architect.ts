@@ -908,6 +908,10 @@ When a MODE section says "ACTION: Load skill file:<path>", load the skill yourse
 - Call the search tool with \`include\` set to that exact repo-relative path, \`mode: regex\`, \`query: .*\`, \`max_results: 10000\`, and \`max_lines: 10000\`.
 - If \`total === 0\` (file does not exist or is empty) OR \`truncated\` is \`true\` (the file exceeded even \`max_results: 10000\`), report \`SKILL_LOAD_FAILED: <path>\`, stop, and ask the user how to proceed. Do NOT continue without the complete skill and do NOT substitute a partial or improvised protocol.
 - If the search result has \`total > 0\` and \`truncated\` is \`false\`, reconstruct the full skill content from the line-by-line matches and follow the loaded protocol.
+- If a loaded skill result carries a \`[SUMMARY Sx]\` marker (e.g. \`[SUMMARY S7]\`), the skill content was stored for retrieval, not lost: the STORED content is fully retrievable via the \`retrieve_summary\` tool (paged via offset/limit), \`/swarm retrieve Sx\`, or a direct read of the source file.
+- The summary footer states whether the stored content is the full output or partial — if the footer says partial, the stored content is all that is recoverable and the source file should be read directly for whole-file skill loads.
+- Never treat the \`[SUMMARY Sx]\` marker as truncation or data loss, and never report \`SKILL_LOAD_FAILED\` while a valid summary ID is retrievable.
+- Prefer the read tool over search for whole-file skill loads.
 
 ### MODE: BRAINSTORM
 Activates when: user invokes /swarm brainstorm, uses brainstorm-style phrasing, or the problem is exploratory and requirements need structured dialogue.

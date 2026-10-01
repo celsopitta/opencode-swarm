@@ -442,4 +442,80 @@ describe('Skills Propagation to Subagents', () => {
 			expect(AGENT_TOOL_MAP.designer).toContain('search');
 		});
 	});
+
+	describe('[SUMMARY Sx] retrieval branch in skill-loading protocol', () => {
+		// Distinctive once-per-branch phrase; kept backtick-free so the assertion
+		// matches the rendered prompt regardless of the source's escaped-backtick
+		// convention.
+		const marker = 'the skill content was stored for retrieval, not lost';
+		const entries: Array<[string, () => string]> = [
+			['architect', () => createArchitectAgent('test-model').config.prompt!],
+			['coder', () => createCoderAgent('test-model').config.prompt!],
+			['reviewer', () => createReviewerAgent('test-model').config.prompt!],
+			[
+				'test_engineer',
+				() => createTestEngineerAgent('test-model').config.prompt!,
+			],
+			['sme', () => createSMEAgent('test-model').config.prompt!],
+			[
+				'docs (standard)',
+				() =>
+					createDocsAgent('test-model', undefined, undefined, 'standard').config
+						.prompt!,
+			],
+			[
+				'docs (design_docs)',
+				() =>
+					createDocsAgent('test-model', undefined, undefined, 'design_docs')
+						.config.prompt!,
+			],
+			['designer', () => createDesignerAgent('test-model').config.prompt!],
+		];
+
+		for (const [label, getPrompt] of entries) {
+			it(`${label} skill-loading block carries the [SUMMARY Sx] branch`, () => {
+				const prompt = getPrompt();
+				// The branch lives in the SKILL LOADING / SKILLS HANDLING block.
+				const headerIdx = ['SKILL LOADING', 'SKILLS HANDLING']
+					.map((h) => prompt.indexOf(h))
+					.filter((i) => i >= 0)
+					.sort((a, b) => a - b)[0];
+				expect(headerIdx).toBeGreaterThanOrEqual(0);
+				expect(prompt.indexOf(marker)).toBeGreaterThan(headerIdx);
+				// The branch acknowledges the partial-footer state.
+				expect(prompt).toContain('partial');
+				expect(prompt).toContain(
+					'the stored content is all that is recoverable',
+				);
+				// The branch names the retrieval paths.
+				expect(prompt).toContain('retrieve_summary');
+				expect(prompt).toContain('/swarm retrieve');
+				expect(prompt).toContain('direct read of the source file');
+			});
+		}
+
+		it('reviewer carries the branch exactly once (primary block only)', () => {
+			expect(
+				createReviewerAgent('test-model').config.prompt!.split(marker).length -
+					1,
+			).toBe(1);
+		});
+
+		it('docs carries the branch in BOTH blocks (one per role)', () => {
+			const standard = createDocsAgent(
+				'test-model',
+				undefined,
+				undefined,
+				'standard',
+			).config.prompt!;
+			const design = createDocsAgent(
+				'test-model',
+				undefined,
+				undefined,
+				'design_docs',
+			).config.prompt!;
+			expect(standard.split(marker).length - 1).toBe(1);
+			expect(design.split(marker).length - 1).toBe(1);
+		});
+	});
 });

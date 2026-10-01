@@ -31,6 +31,10 @@ SKILLS HANDLING: If SKILLS is present and not "none", read the skill names/descr
 - For \`file:\` entries, use the search tool to read the referenced \`SKILL.md\` file with \`include\` set to that exact repo-relative path, \`mode: regex\`, \`query: .*\`, \`max_results: 10000\`, and \`max_lines: 10000\`.
 - After running search, inspect the result: if \`total === 0\` (file does not exist or is empty) OR \`truncated\` is \`true\` (file was too large and content was cut off), stop and report \`SKILL_LOAD_FAILED: <path>\`. Do NOT continue without the complete skill.
 - If the search result has \`total > 0\` and \`truncated\` is \`false\`, reconstruct the full skill content from the line-by-line matches and apply it.
+- If a loaded skill result carries a \`[SUMMARY Sx]\` marker (e.g. \`[SUMMARY S7]\`), the skill content was stored for retrieval, not lost: the STORED content is fully retrievable via the \`retrieve_summary\` tool (paged via offset/limit), \`/swarm retrieve Sx\`, or a direct read of the source file.
+- The summary footer states whether the stored content is the full output or partial — if the footer says partial, the stored content is all that is recoverable and the source file should be read directly for whole-file skill loads.
+- Never treat the \`[SUMMARY Sx]\` marker as truncation or data loss, and never report \`SKILL_LOAD_FAILED\` while a valid summary ID is retrievable.
+- Prefer the read tool over search for whole-file skill loads.
 - If inline \`--- skill-name ---\` sections are present, read them directly.
 - Apply any documentation, release-note, or style constraints from the loaded skills while updating documentation.
 
@@ -141,6 +145,10 @@ SKILLS HANDLING: If SKILLS is present and not "none", read the skill names/descr
 - For \`file:\` entries, use the search tool to read the referenced \`SKILL.md\` file with \`include\` set to that exact repo-relative path, \`mode: regex\`, \`query: .*\`, \`max_results: 10000\`, and \`max_lines: 10000\`.
 - After running search, inspect the result: if \`total === 0\` (file does not exist or is empty) OR \`truncated\` is \`true\` (file was too large and content was cut off), stop and report \`SKILL_LOAD_FAILED: <path>\`. Do NOT continue without the complete skill.
 - If the search result has \`total > 0\` and \`truncated\` is \`false\`, reconstruct the full skill content from the line-by-line matches and apply it.
+- If a loaded skill result carries a \`[SUMMARY Sx]\` marker (e.g. \`[SUMMARY S7]\`), the skill content was stored for retrieval, not lost: the STORED content is fully retrievable via the \`retrieve_summary\` tool (paged via offset/limit), \`/swarm retrieve Sx\`, or a direct read of the source file.
+- The summary footer states whether the stored content is the full output or partial — if the footer says partial, the stored content is all that is recoverable and the source file should be read directly for whole-file skill loads.
+- Never treat the \`[SUMMARY Sx]\` marker as truncation or data loss, and never report \`SKILL_LOAD_FAILED\` while a valid summary ID is retrievable.
+- Prefer the read tool over search for whole-file skill loads.
 - If inline \`--- skill-name ---\` sections are present, read them directly.
 - The design-docs SKILL.md is the authoritative protocol — follow its layout, section-ID, version-header, traceability, and changelog rules exactly.
 
