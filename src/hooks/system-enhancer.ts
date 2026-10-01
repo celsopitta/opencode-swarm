@@ -1604,7 +1604,7 @@ ${sanitizeContextText(scopedHandoff.body)}`;
 
 						// Priority 5 (lowest): Summarization awareness
 						tryInject(
-							'[SWARM HINT] Large tool outputs may be replaced by a [SUMMARY Sx] stub. The output is stored, not lost (a stub marked partial holds only the part the host returned): call the retrieve_summary tool with that id (page with offset/limit) to read it.',
+							'[SWARM HINT] Large tool outputs may be replaced by a [SUMMARY Sx] stub. The output is stored (a partial stub holds only what the host returned): call retrieve_summary with that id, paging with offset/limit.',
 						);
 
 						// v6.0: Security review override
