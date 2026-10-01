@@ -228,7 +228,7 @@ describe('final context accounting (#2107 §3)', () => {
 				info: {
 					role: 'assistant',
 					sessionID: SESSION,
-					tokens: { input: 40_000, cache: { read: 0, write: 0 } },
+					tokens: { input: 40_000, output: 10, cache: { read: 0, write: 0 } },
 				},
 				parts: [{ type: 'text', text: 'done' }],
 			} as unknown as MessageWithParts,

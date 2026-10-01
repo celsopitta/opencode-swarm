@@ -347,7 +347,7 @@ describe('computeContextHeadroom', () => {
 		expect(result.modelLimit).toBe(50000);
 	});
 
-	it('uses latest valid assistant provider prompt accounting when available', () => {
+	it('uses the latest completed model call as the provider figure when available', () => {
 		const messages = [
 			makeMessage({ role: 'user', text: 'before' }),
 			{
@@ -357,6 +357,8 @@ describe('computeContextHeadroom', () => {
 					providerID: 'openai',
 					tokens: {
 						input: 120,
+						output: 5,
+						reasoning: 3,
 						cache: { read: 30, write: 10 },
 					},
 				},
@@ -367,7 +369,11 @@ describe('computeContextHeadroom', () => {
 
 		const result = computeContextHeadroom(messages as any);
 		expect(result.usageSource).toBe('provider');
-		expect(result.tokensUsed).toBeGreaterThan(160);
+		// The host-measured size of the completed call, as the host UI shows it…
+		expect(result.providerTokens).toBe(168);
+		// …plus only what was added since (the follow-up message).
+		expect(result.pendingEstimateTokens).toBeGreaterThan(0);
+		expect(result.tokensUsed).toBe(168 + result.pendingEstimateTokens);
 		expect(result.modelId).toBe('gpt-5');
 		expect(result.provider).toBe('openai');
 	});

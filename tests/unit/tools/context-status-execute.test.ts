@@ -281,6 +281,7 @@ describe('context_status.execute', () => {
 					providerID: 'openai',
 					tokens: {
 						input: 150,
+						output: 8,
 						cache: { read: 20, write: 10 },
 					},
 				},
@@ -293,7 +294,63 @@ describe('context_status.execute', () => {
 			await context_status.execute({}, makeCtx()),
 		) as Record<string, unknown>;
 		expect(parsed.usageSource).toBe('provider');
-		expect(Number(parsed.tokensUsed)).toBeGreaterThan(180);
+		expect(parsed.providerTokens).toBe(188);
+		expect(Number(parsed.tokensUsed)).toBe(
+			188 + Number(parsed.pendingEstimateTokens),
+		);
+	});
+
+	it('regression: reports the last completed call when invoked inside a message still being generated (CU-1)', async () => {
+		// Previous code read the in-flight message — created by the host with
+		// every token field at zero — as a provider report, and returned
+		// tokensUsed: 1 (the estimate of this tool call's empty arguments) in
+		// sessions whose completed calls measured about 180,000 tokens. The
+		// token fields below are a completed call recorded in one of them.
+		_internals.fetchSessionMessages = (async () => [
+			{
+				info: {
+					role: 'assistant',
+					modelID: 'gpt-5',
+					providerID: 'openai',
+					tokens: {
+						input: 172735,
+						output: 152,
+						reasoning: 3553,
+						cache: { read: 0, write: 0 },
+					},
+				},
+				parts: [{ type: 'text', text: 'previous reply' }],
+			},
+			makeMessage({ role: 'user', text: 'call context_status' }),
+			{
+				info: {
+					role: 'assistant',
+					modelID: 'gpt-5',
+					providerID: 'openai',
+					tokens: {
+						input: 0,
+						output: 0,
+						reasoning: 0,
+						cache: { read: 0, write: 0 },
+					},
+				},
+				parts: [
+					{
+						type: 'tool',
+						tool: 'context_status',
+						state: { status: 'running', input: {} },
+					},
+				],
+			},
+		]) as typeof _internals.fetchSessionMessages;
+
+		const parsed = JSON.parse(
+			await context_status.execute({}, makeCtx()),
+		) as Record<string, unknown>;
+		expect(parsed.usageSource).toBe('provider');
+		expect(parsed.providerTokens).toBe(176440);
+		expect(Number(parsed.tokensUsed)).toBeGreaterThanOrEqual(176440);
+		expect(Number(parsed.pendingEstimateTokens)).toBeLessThan(100);
 	});
 
 	it('counts visible tool error text in provider usage', async () => {
@@ -305,6 +362,7 @@ describe('context_status.execute', () => {
 					providerID: 'openai',
 					tokens: {
 						input: 100,
+						output: 6,
 						cache: { read: 20, write: 10 },
 					},
 				},
@@ -323,7 +381,13 @@ describe('context_status.execute', () => {
 			await context_status.execute({}, makeCtx()),
 		) as Record<string, unknown>;
 		expect(parsed.usageSource).toBe('provider');
-		expect(Number(parsed.tokensUsed)).toBeGreaterThan(130);
+		expect(parsed.providerTokens).toBe(136);
+		// The tool's error text arrived after the call and is not in the
+		// provider's count, so it is the pending part.
+		expect(Number(parsed.pendingEstimateTokens)).toBeGreaterThan(0);
+		expect(Number(parsed.tokensUsed)).toBe(
+			136 + Number(parsed.pendingEstimateTokens),
+		);
 	});
 });
 

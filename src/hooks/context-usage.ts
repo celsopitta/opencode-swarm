@@ -9,8 +9,14 @@ const TRUNCATED_OBJECT_KEYS_FALLBACK = '[+more keys]';
 
 export interface ContextUsageMessageInfo {
 	role?: string;
+	id?: unknown;
+	time?: {
+		created?: unknown;
+	};
 	tokens?: {
 		input?: unknown;
+		output?: unknown;
+		reasoning?: unknown;
 		cache?: {
 			read?: unknown;
 			write?: unknown;
@@ -40,9 +46,28 @@ export interface ContextUsageMessage {
 export type ContextUsageSource = 'provider' | 'estimated';
 
 export interface ContextUsageResult {
+	/**
+	 * Tokens in the conversation right now: `providerTokens` plus
+	 * `pendingEstimateTokens` when a completed model call exists, otherwise a
+	 * pure estimate.
+	 */
 	tokensUsed: number;
 	source: ContextUsageSource;
 	assistantAnchorIndex: number | null;
+	/**
+	 * The host-measured size of the most recent COMPLETED model call — the same
+	 * figure the OpenCode TUI displays (`input + output + reasoning +
+	 * cache.read + cache.write` of the most recently created assistant message
+	 * that has output tokens). Null when no completed call exists yet.
+	 */
+	providerTokens: number | null;
+	/**
+	 * Estimate of content the provider has not counted yet: tool results
+	 * attached to the anchor message after its call returned, and every message
+	 * that follows it in the list. This is the only estimated part of a
+	 * `provider` reading.
+	 */
+	pendingEstimateTokens: number;
 }
 
 function isFiniteNonNegativeNumber(value: unknown): value is number {
@@ -576,29 +601,149 @@ export function estimateMessageTokens(message: ContextUsageMessage): number {
 	return totalTokens;
 }
 
-export function readProviderPromptTokens(
+/**
+ * Estimated tokens of the tool RESULTS on a message (completed output or error
+ * text). A tool's result is produced after the model call that requested it,
+ * so the provider's token counts for that call do not include it.
+ */
+export function estimateToolResultTokens(message: ContextUsageMessage): number {
+	if (!message?.parts || !Array.isArray(message.parts)) return 0;
+
+	let totalTokens = 0;
+	for (const part of message.parts) {
+		if (part?.type !== 'tool') continue;
+		if (
+			part.state?.status === 'completed' &&
+			typeof part.state.output === 'string'
+		) {
+			totalTokens += estimateTokens(part.state.output);
+		}
+		if (
+			part.state?.status === 'error' &&
+			typeof part.state.error === 'string'
+		) {
+			totalTokens += estimateTokens(part.state.error);
+		}
+	}
+	return totalTokens;
+}
+
+/**
+ * Reads the host-measured size of a COMPLETED model call from an assistant
+ * message: `input + output + reasoning + cache.read + cache.write`.
+ *
+ * This is deliberately the OpenCode TUI's own rule. The host creates every
+ * assistant message with all token fields at zero and fills them in only when
+ * the model call finishes, so a message that is still being generated (the one
+ * a tool call runs inside) and a message that was aborted both carry zeros.
+ * Those zeros are placeholders, not a provider report of an empty context:
+ * like the TUI, only a message with `output > 0` counts.
+ *
+ * Returns undefined when the message is not a completed call or its token
+ * fields are not finite non-negative numbers.
+ */
+export function readProviderCallTokens(
 	message: ContextUsageMessage | undefined,
 ): number | undefined {
 	const tokens = message?.info?.tokens;
 	const input = tokens?.input;
+	const output = tokens?.output;
+	const reasoning = tokens?.reasoning ?? 0;
 	const cacheRead = tokens?.cache?.read;
 	const cacheWrite = tokens?.cache?.write;
 
 	if (
 		!isFiniteNonNegativeNumber(input) ||
+		!isFiniteNonNegativeNumber(output) ||
+		!isFiniteNonNegativeNumber(reasoning) ||
 		!isFiniteNonNegativeNumber(cacheRead) ||
 		!isFiniteNonNegativeNumber(cacheWrite)
 	) {
 		return undefined;
 	}
+	if (output <= 0) {
+		return undefined;
+	}
 
-	const total = input + cacheRead + cacheWrite;
+	const total = input + output + reasoning + cacheRead + cacheWrite;
 	if (!Number.isFinite(total)) {
 		return undefined;
 	}
 	return Math.floor(total);
 }
 
+/**
+ * True when `candidate` was created strictly before `current`, by the host's
+ * own ordering rule: creation time first, then message id. When either key is
+ * missing on either message the two cannot be ordered and this returns false,
+ * so the caller falls back to list position.
+ */
+function isCreatedBefore(
+	candidate: ContextUsageMessage,
+	current: ContextUsageMessage,
+): boolean {
+	const candidateCreated = candidate.info?.time?.created;
+	const currentCreated = current.info?.time?.created;
+	if (
+		typeof candidateCreated !== 'number' ||
+		typeof currentCreated !== 'number'
+	) {
+		return false;
+	}
+	if (candidateCreated !== currentCreated) {
+		return candidateCreated < currentCreated;
+	}
+	const candidateId = candidate.info?.id;
+	const currentId = current.info?.id;
+	if (typeof candidateId !== 'string' || typeof currentId !== 'string') {
+		return false;
+	}
+	return candidateId < currentId;
+}
+
+/**
+ * The most recently CREATED completed model call and its host-measured size,
+ * or null when the conversation has none.
+ *
+ * List position is not creation order. After a compaction that retains a
+ * tail, the host hands the message-transform hooks
+ * `[compaction request, summary, ...retained tail, ...later]`: the retained
+ * tail was created BEFORE the summary but sits after it. The host and its TUI
+ * pick "the latest" message by `(time.created, id)`, so this does too; taking
+ * the last completed call by position would anchor on a pre-compaction call
+ * and report the size of a conversation that no longer exists.
+ *
+ * Messages that carry no creation time (or equal times and no id) cannot be
+ * ordered, and the later list position wins.
+ */
+function findLatestCompletedCall(
+	messages: ContextUsageMessage[],
+): { index: number; providerTokens: number } | null {
+	let latest: { index: number; providerTokens: number } | null = null;
+	for (let i = 0; i < messages.length; i++) {
+		const message = messages[i];
+		if (message?.info?.role !== 'assistant') continue;
+		const providerTokens = readProviderCallTokens(message);
+		if (providerTokens === undefined) continue;
+		if (latest && isCreatedBefore(message, messages[latest.index])) continue;
+		latest = { index: i, providerTokens };
+	}
+	return latest;
+}
+
+/**
+ * Measures the conversation's current size.
+ *
+ * Anchors on the most recently created COMPLETED model call (see
+ * {@link readProviderCallTokens} and {@link findLatestCompletedCall}) and
+ * takes the host's own measurement of it — the figure the OpenCode TUI shows.
+ * Only content the provider has not counted yet is estimated: the tool
+ * results attached to that message, and every message that follows it in the
+ * list (including an assistant message that is still being generated, and a
+ * tail the host retained across a compaction). With no completed call in the
+ * conversation there is nothing measured to anchor on, and the messages are
+ * estimated; that estimate cannot see the system prompt or tool definitions.
+ */
 export function computeContextUsage(
 	messages: ContextUsageMessage[] | undefined,
 ): ContextUsageResult {
@@ -607,25 +752,26 @@ export function computeContextUsage(
 			tokensUsed: 0,
 			source: 'estimated',
 			assistantAnchorIndex: null,
+			providerTokens: null,
+			pendingEstimateTokens: 0,
 		};
 	}
 
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const message = messages[i];
-		if (message?.info?.role !== 'assistant') continue;
-
-		const providerPromptTokens = readProviderPromptTokens(message);
-		if (providerPromptTokens === undefined) continue;
-
-		let totalTokens = providerPromptTokens + estimateMessageTokens(message);
-		for (let j = i + 1; j < messages.length; j++) {
-			totalTokens += estimateMessageTokens(messages[j]);
+	const anchor = findLatestCompletedCall(messages);
+	if (anchor) {
+		let pendingEstimateTokens = estimateToolResultTokens(
+			messages[anchor.index],
+		);
+		for (let j = anchor.index + 1; j < messages.length; j++) {
+			pendingEstimateTokens += estimateMessageTokens(messages[j]);
 		}
 
 		return {
-			tokensUsed: totalTokens,
+			tokensUsed: anchor.providerTokens + pendingEstimateTokens,
 			source: 'provider',
-			assistantAnchorIndex: i,
+			assistantAnchorIndex: anchor.index,
+			providerTokens: anchor.providerTokens,
+			pendingEstimateTokens,
 		};
 	}
 
@@ -638,6 +784,8 @@ export function computeContextUsage(
 		tokensUsed: totalTokens,
 		source: 'estimated',
 		assistantAnchorIndex: null,
+		providerTokens: null,
+		pendingEstimateTokens: totalTokens,
 	};
 }
 
@@ -646,6 +794,7 @@ export const _test_exports = {
 	estimateToolInputTokens,
 	estimateVisibleToolPartTokens,
 	estimateMessageTokens,
-	readProviderPromptTokens,
+	estimateToolResultTokens,
+	readProviderCallTokens,
 	serializeToolInput,
 };

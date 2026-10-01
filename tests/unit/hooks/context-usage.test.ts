@@ -5,7 +5,8 @@ const {
 	computeContextUsage,
 	estimateMessageTokens,
 	estimateToolInputTokens,
-	readProviderPromptTokens,
+	estimateToolResultTokens,
+	readProviderCallTokens,
 	serializeToolInput,
 } = _test_exports;
 
@@ -15,6 +16,8 @@ function makeMessage(
 		text?: string;
 		tokens?: {
 			input?: unknown;
+			output?: unknown;
+			reasoning?: unknown;
 			cache?: { read?: unknown; write?: unknown };
 		};
 		toolOutput?: string;
@@ -97,34 +100,52 @@ class CountingSet<T> extends Set<T> {
 	}
 }
 
+/** Token fields of a completed model call (the host fills these in at the end). */
+function completed(
+	input: number,
+	output: number,
+	extra: { reasoning?: number; read?: number; write?: number } = {},
+) {
+	return {
+		input,
+		output,
+		...(extra.reasoning !== undefined ? { reasoning: extra.reasoning } : {}),
+		cache: { read: extra.read ?? 0, write: extra.write ?? 0 },
+	};
+}
+
 describe('context-usage helper', () => {
-	test('falls back to estimated usage when no assistant prompt accounting exists', () => {
+	test('falls back to estimated usage when no completed model call exists', () => {
 		const messages = [
 			makeMessage({ role: 'user', text: 'hello world' }),
 			makeMessage({ role: 'assistant', text: 'reply' }),
 		];
 
 		const result = computeContextUsage(messages);
-		expect(result.source).toBe('estimated');
-		expect(result.tokensUsed).toBe(
-			estimateMessageTokens(messages[0]) + estimateMessageTokens(messages[1]),
-		);
-		expect(result.assistantAnchorIndex).toBeNull();
+		const estimate =
+			estimateMessageTokens(messages[0]) + estimateMessageTokens(messages[1]);
+		expect(result).toEqual({
+			tokensUsed: estimate,
+			source: 'estimated',
+			assistantAnchorIndex: null,
+			providerTokens: null,
+			pendingEstimateTokens: estimate,
+		});
 	});
 
-	test('uses the latest valid assistant prompt accounting and adds visible assistant content plus later messages', () => {
+	test('uses the last completed call (input + output + reasoning + cache) and adds only uncounted content', () => {
 		const messages = [
 			makeMessage({ role: 'user', text: 'before' }),
 			makeMessage({
 				role: 'assistant',
 				text: 'older reply',
-				tokens: { input: 10, cache: { read: 2, write: 1 } },
+				tokens: completed(10, 5, { read: 2, write: 1 }),
 			}),
 			makeMessage({
 				role: 'assistant',
 				text: 'latest reply',
 				toolOutput: 'tool output',
-				tokens: { input: 120, cache: { read: 30, write: 10 } },
+				tokens: completed(120, 40, { reasoning: 15, read: 30, write: 10 }),
 			}),
 			makeMessage({ role: 'user', text: 'follow up' }),
 		];
@@ -132,14 +153,21 @@ describe('context-usage helper', () => {
 		const result = computeContextUsage(messages);
 		expect(result.source).toBe('provider');
 		expect(result.assistantAnchorIndex).toBe(2);
+		expect(result.providerTokens).toBe(120 + 40 + 15 + 30 + 10);
+		// The anchor's own text is covered by the provider's output count; only
+		// its tool RESULT (produced after the call) and later messages are added.
+		expect(result.pendingEstimateTokens).toBe(
+			estimateToolResultTokens(messages[2]) +
+				estimateMessageTokens(messages[3]),
+		);
 		expect(result.tokensUsed).toBe(
-			160 +
-				estimateMessageTokens(messages[2]) +
+			215 +
+				estimateToolResultTokens(messages[2]) +
 				estimateMessageTokens(messages[3]),
 		);
 	});
 
-	test('counts bounded serialized tool input on the anchor assistant message', () => {
+	test("does not add the anchor message's generated content (text, tool arguments) on top of the provider count", () => {
 		const cyclicInput: Record<string, unknown> = { b: 2, a: 1 };
 		cyclicInput.self = cyclicInput;
 		const messages = [
@@ -147,13 +175,17 @@ describe('context-usage helper', () => {
 				role: 'assistant',
 				text: 'reply',
 				toolInput: cyclicInput,
-				tokens: { input: 100, cache: { read: 20, write: 10 } },
+				toolOutput: '',
+				tokens: completed(100, 30, { read: 20, write: 10 }),
 			}),
 		];
 
 		const result = computeContextUsage(messages);
 		expect(result.source).toBe('provider');
-		expect(result.tokensUsed).toBe(130 + estimateMessageTokens(messages[0]));
+		expect(result.tokensUsed).toBe(160);
+		expect(result.pendingEstimateTokens).toBe(0);
+		// The same message estimated in full would be larger.
+		expect(estimateMessageTokens(messages[0])).toBeGreaterThan(0);
 	});
 
 	test('counts bounded serialized tool input from later messages after the provider anchor', () => {
@@ -161,7 +193,7 @@ describe('context-usage helper', () => {
 			makeMessage({
 				role: 'assistant',
 				text: 'reply',
-				tokens: { input: 80, cache: { read: 10, write: 10 } },
+				tokens: completed(80, 5, { read: 10, write: 10 }),
 			}),
 			makeMessage({
 				role: 'assistant',
@@ -169,25 +201,23 @@ describe('context-usage helper', () => {
 					['z', 1],
 					['a', 2],
 				]),
+				toolOutput: '',
 			}),
 		];
 
 		const result = computeContextUsage(messages);
 		expect(result.source).toBe('provider');
-		expect(result.tokensUsed).toBe(
-			100 +
-				estimateMessageTokens(messages[0]) +
-				estimateMessageTokens(messages[1]),
-		);
+		expect(result.tokensUsed).toBe(105 + estimateMessageTokens(messages[1]));
+		expect(estimateMessageTokens(messages[1])).toBeGreaterThan(0);
 	});
 
-	test('counts the full size of large tool input strings at the provider anchor and later messages', () => {
+	test('counts the full size of large tool input strings on later messages, not on the anchor', () => {
 		const largeCommand = 'x'.repeat(10_000);
 		const anchor = makeMessage({
 			role: 'assistant',
 			toolInput: { command: largeCommand },
 			toolOutput: '',
-			tokens: { input: 100, cache: { read: 20, write: 10 } },
+			tokens: completed(100, 3000, { read: 20, write: 10 }),
 		});
 		const later = makeMessage({
 			role: 'assistant',
@@ -199,28 +229,31 @@ describe('context-usage helper', () => {
 		expect(estimateToolInputTokens({ command: largeCommand })).toBeGreaterThan(
 			3_000,
 		);
-		expect(result.tokensUsed).toBe(
-			130 + estimateMessageTokens(anchor) + estimateMessageTokens(later),
-		);
-		expect(result.tokensUsed).toBeGreaterThan(6_000);
+		expect(result.tokensUsed).toBe(3130 + estimateMessageTokens(later));
 		expect(
 			serializeToolInput({ command: largeCommand }).length,
 		).toBeLessThanOrEqual(2_001);
 	});
 
-	test('counts visible tool error text on the anchor assistant message', () => {
-		const messages = [
-			makeMessage({
-				role: 'assistant',
-				text: 'reply',
-				toolError: 'tool failed loudly',
-				tokens: { input: 100, cache: { read: 20, write: 10 } },
-			}),
-		];
+	test('counts tool results (output and error text) attached to the anchor message', () => {
+		const withOutput = makeMessage({
+			role: 'assistant',
+			text: 'reply',
+			toolOutput: 'a tool result the provider has not counted yet',
+			tokens: completed(100, 10, { read: 20, write: 10 }),
+		});
+		const withError = makeMessage({
+			role: 'assistant',
+			text: 'reply',
+			toolError: 'tool failed loudly',
+			tokens: completed(100, 10, { read: 20, write: 10 }),
+		});
 
-		const result = computeContextUsage(messages);
-		expect(result.source).toBe('provider');
-		expect(result.tokensUsed).toBe(130 + estimateMessageTokens(messages[0]));
+		for (const anchor of [withOutput, withError]) {
+			const result = computeContextUsage([anchor]);
+			expect(estimateToolResultTokens(anchor)).toBeGreaterThan(0);
+			expect(result.tokensUsed).toBe(140 + estimateToolResultTokens(anchor));
+		}
 	});
 
 	test('counts visible tool error text from later messages after the provider anchor', () => {
@@ -228,7 +261,7 @@ describe('context-usage helper', () => {
 			makeMessage({
 				role: 'assistant',
 				text: 'reply',
-				tokens: { input: 80, cache: { read: 10, write: 10 } },
+				tokens: completed(80, 5, { read: 10, write: 10 }),
 			}),
 			makeMessage({
 				role: 'assistant',
@@ -238,11 +271,7 @@ describe('context-usage helper', () => {
 
 		const result = computeContextUsage(messages);
 		expect(result.source).toBe('provider');
-		expect(result.tokensUsed).toBe(
-			100 +
-				estimateMessageTokens(messages[0]) +
-				estimateMessageTokens(messages[1]),
-		);
+		expect(result.tokensUsed).toBe(105 + estimateMessageTokens(messages[1]));
 	});
 
 	test('skips malformed assistant token payloads and keeps searching backward', () => {
@@ -250,12 +279,12 @@ describe('context-usage helper', () => {
 			makeMessage({
 				role: 'assistant',
 				text: 'older valid',
-				tokens: { input: 40, cache: { read: 10, write: 5 } },
+				tokens: completed(40, 5, { read: 10, write: 5 }),
 			}),
 			makeMessage({
 				role: 'assistant',
 				text: 'newer invalid',
-				tokens: { input: 50, cache: { read: -1, write: 5 } },
+				tokens: { input: 50, output: 9, cache: { read: -1, write: 5 } },
 			}),
 			makeMessage({ role: 'user', text: 'after' }),
 		];
@@ -264,59 +293,68 @@ describe('context-usage helper', () => {
 		expect(result.source).toBe('provider');
 		expect(result.assistantAnchorIndex).toBe(0);
 		expect(result.tokensUsed).toBe(
-			55 +
-				estimateMessageTokens(messages[0]) +
+			60 +
 				estimateMessageTokens(messages[1]) +
 				estimateMessageTokens(messages[2]),
 		);
 	});
 
-	test('reads provider prompt tokens only when all fields are finite and nonnegative', () => {
+	test('reads a completed call as input + output + reasoning + cache, like the host UI', () => {
+		const read = (tokens: Record<string, unknown>) =>
+			readProviderCallTokens(makeMessage({ role: 'assistant', tokens }));
+
+		expect(read(completed(12, 7, { reasoning: 5, read: 3, write: 4 }))).toBe(
+			31,
+		);
+		// reasoning is optional (absent means zero) …
+		expect(read({ input: 12, output: 7, cache: { read: 3, write: 4 } })).toBe(
+			26,
+		);
+		// … but a malformed value is not silently ignored.
 		expect(
-			readProviderPromptTokens(
-				makeMessage({
-					role: 'assistant',
-					tokens: { input: 12, cache: { read: 3, write: 4 } },
-				}),
-			),
-		).toBe(19);
+			read({
+				input: 12,
+				output: 7,
+				reasoning: -1,
+				cache: { read: 3, write: 4 },
+			}),
+		).toBeUndefined();
+		// No output tokens: not a completed call (placeholder or aborted).
+		expect(read(completed(12, 0, { read: 3, write: 4 }))).toBeUndefined();
+		expect(read({ input: 12, cache: { read: 3, write: 4 } })).toBeUndefined();
+		// Any non-finite or negative field disqualifies the message.
 		expect(
-			readProviderPromptTokens(
-				makeMessage({
-					role: 'assistant',
-					tokens: { input: Infinity, cache: { read: 3, write: 4 } },
-				}),
-			),
+			read({ input: Infinity, output: 7, cache: { read: 3, write: 4 } }),
 		).toBeUndefined();
 		expect(
-			readProviderPromptTokens(
-				makeMessage({
-					role: 'assistant',
-					tokens: { input: 12, cache: { read: 3, write: -4 } },
-				}),
-			),
+			read({ input: 12, output: 7, cache: { read: 3, write: -4 } }),
 		).toBeUndefined();
+		expect(readProviderCallTokens(undefined)).toBeUndefined();
 	});
 
-	test('falls back to estimated usage when provider prompt accounting overflows', () => {
+	test('falls back to estimated usage when the provider total overflows', () => {
 		const messages = [
 			makeMessage({
 				role: 'assistant',
 				text: 'anchor',
 				tokens: {
 					input: Number.MAX_VALUE,
+					output: 1,
 					cache: { read: Number.MAX_VALUE, write: 1 },
 				},
 			}),
 			makeMessage({ role: 'user', text: 'after overflow' }),
 		];
 
-		expect(readProviderPromptTokens(messages[0])).toBeUndefined();
+		const estimate =
+			estimateMessageTokens(messages[0]) + estimateMessageTokens(messages[1]);
+		expect(readProviderCallTokens(messages[0])).toBeUndefined();
 		expect(computeContextUsage(messages)).toEqual({
-			tokensUsed:
-				estimateMessageTokens(messages[0]) + estimateMessageTokens(messages[1]),
+			tokensUsed: estimate,
 			source: 'estimated',
 			assistantAnchorIndex: null,
+			providerTokens: null,
+			pendingEstimateTokens: estimate,
 		});
 	});
 

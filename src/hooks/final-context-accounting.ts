@@ -9,8 +9,8 @@
  *
  * - `output.messages` (post-consolidation; carries every messages-chain
  *   injection: knowledge, memory recall, the advisory block) via
- *   `computeContextUsage`, which prefers provider-reported token usage when the
- *   latest assistant message carries it;
+ *   `computeContextUsage`, which prefers provider-reported token usage when a
+ *   completed model call carries it;
  * - PLUS the system chain's `output.system` content (system-enhancer banners,
  *   context capsules, the swarm-command banner). Those bytes live in a separate
  *   output structure the messages chain never sees and consolidation never
@@ -159,8 +159,9 @@ export function createFinalContextAccountingStep(
 			// pre-mutation number is stale for final accounting. Caching across
 			// handlers would under-count injected content.
 			// Measure the final messages surface exactly once. Provider-reported
-			// usage (latest assistant info.tokens + estimated tail) is preferred
-			// over the pure estimate.
+			// usage (the host's measurement of the last completed model call +
+			// an estimate of the content added since) is preferred over the pure
+			// estimate.
 			const usage = computeContextUsage(messages);
 
 			// System-surface emissions from the turn ledger (bytes that live in
