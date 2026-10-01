@@ -197,7 +197,7 @@ describe('ADVERSARIAL SECURITY TESTS - run-memory service', () => {
 
 			// Reading should handle it gracefully
 			const history = await getTaskHistory(tmpDir, longTaskId);
-			expect(history.length).toBeGreaterThanOrEqual(0);
+			expect(history).toHaveLength(1);
 			attackDetected = true;
 			expect(attackDetected).toBe(true);
 		});

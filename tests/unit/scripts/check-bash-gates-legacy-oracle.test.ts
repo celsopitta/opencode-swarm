@@ -5,7 +5,10 @@
  * the exact origin/main tree the port started from. On every platform we assert
  * the current TypeScript owner against the frozen golden diagnostics; when a
  * real Bash runtime is available we also execute the archived owner and require
- * byte-for-byte parity on stdout/stderr and exit code.
+ * byte-for-byte parity on stdout/stderr and exit code. Declared divergence
+ * (issue #2951): check-test-clock's TS owner widens the scan to src/** and adds
+ * a `Raw-clock-no-helper files (ratchet)` summary line, so its clock case pins
+ * superseded byte parity (shared archived golden + TS-only ratchet line).
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
@@ -295,7 +298,11 @@ describe('issue #2094 legacy-oracle parity', () => {
 		);
 		await commit(repo, 'add violation');
 
-		const expected = [
+		// Superseded byte parity (issue #2951): the TS owner now also scans src/**
+		// and emits a ratchet summary line, so the archived golden below is shared
+		// while the TS leg carries the extra line (value 1 — the fixture's one
+		// violating file, blocking bucket included in the total).
+		const legacyExpected = [
 			'ERROR: tests/fixture.test.ts uses the real clock (Date.now / new Date() / spyOn(Date)) but does not import or call the freezeClock helper.',
 			"       Import from '../../helpers/test-clock.js' (adjust depth) and wrap",
 			'       time-sensitive assertions in withFrozenClock(() => { ... }).',
@@ -307,14 +314,31 @@ describe('issue #2094 legacy-oracle parity', () => {
 			'New violations (blocking): 1',
 			'Pre-existing violations (non-blocking warnings): 0',
 		].join('\n');
+		const tsExpected = `${legacyExpected}
+Raw-clock-no-helper files (ratchet): 1`;
 
-		await expectLegacyParity(
+		const tsResult = await runTsGate(TEST_CLOCK_GATE, repo);
+		expect(tsResult).toEqual({
+			exitCode: 1,
+			stdout: `${tsExpected}
+`,
+			stderr: '',
+		});
+
+		if (!hasBash) return;
+
+		const legacyResult = await runLegacyGate(
 			'scripts/check-test-clock.sh',
-			TEST_CLOCK_GATE,
 			repo,
-			expected,
+			undefined,
+			repo,
 		);
-	});
+		expect(legacyResult.exitCode, legacyResult.stderr).toBe(tsResult.exitCode);
+		expect(normalizeOutput(legacyResult.stdout), legacyResult.stderr).toBe(
+			legacyExpected,
+		);
+		expect(normalizeOutput(legacyResult.stderr)).toBe(tsResult.stderr);
+	}, 120_000);
 
 	test('test-tmpdir preserves the archived blocking tmpdir diagnostic', async () => {
 		const repo = await makeRepo('gate-oracle-test-tmpdir-');

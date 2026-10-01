@@ -565,11 +565,10 @@ describe('ADVERSARIAL: Command Services Attack Vectors', () => {
 			}
 
 			const result = await getEvidenceListData(tempDir);
-			expect(result.tasks.length).toBeGreaterThanOrEqual(0);
-			// Malicious directory name should not appear
-			for (const task of result.tasks) {
-				expect(task.taskId).not.toContain('..');
-			}
+			// Malicious directory name should not appear in any task id
+			expect(result.tasks.every((task) => !task.taskId.includes('..'))).toBe(
+				true,
+			);
 		});
 	});
 

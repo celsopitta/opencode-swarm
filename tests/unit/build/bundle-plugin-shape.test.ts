@@ -114,4 +114,37 @@ describe('bundle plugin-shape contract', () => {
 			).toBe(true);
 		}
 	}, 5_000);
+
+	test('mod.default also satisfies the OpenCode v2 Module schema (issue #3004)', async () => {
+		if (!existsSync(BUNDLE)) {
+			throw new Error(
+				`Bundle missing at ${BUNDLE}. Run \`bun run build\` before this test.`,
+			);
+		}
+		const mod = (await import(pathToFileURL(BUNDLE).href)) as Record<
+			string,
+			unknown
+		>;
+		const value = mod.default as Record<string, unknown> | undefined;
+		// Mirror of the v2 host loader (sst/opencode v2 line,
+		// packages/core/src/plugin/module.ts): Schema.Struct({ default:
+		// Union([{id, effect: fn}, {id, setup: fn}]) }) with excess keys
+		// ignored. The dual shape must pass on the setup branch while keeping
+		// the v1 server key; server-dropped and non-function-setup shapes fail.
+		expect(value, 'mod.default must be an object').toBeTypeOf('object');
+		expect(typeof (value as { id?: unknown })?.id).toBe('string');
+		expect(typeof (value as { setup?: unknown })?.setup).toBe('function');
+		expect(typeof (value as { server?: unknown })?.server).toBe('function');
+		const decodeV2 = (v: unknown): 'setup' | 'effect' | null => {
+			if (typeof v !== 'object' || v === null) return null;
+			const rec = v as { id?: unknown; setup?: unknown; effect?: unknown };
+			if (typeof rec.id !== 'string') return null;
+			if (typeof rec.effect === 'function') return 'effect';
+			if (typeof rec.setup === 'function') return 'setup';
+			return null;
+		};
+		expect(decodeV2(value)).toBe('setup');
+		expect(decodeV2({ id: 'x', server: () => {} })).toBeNull();
+		expect(decodeV2({ id: 'x', setup: 'not-a-function' })).toBeNull();
+	}, 5_000);
 });

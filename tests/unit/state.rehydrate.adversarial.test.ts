@@ -718,8 +718,8 @@ describe('rehydrateSessionFromDisk adversarial tests', () => {
 			await expect(
 				rehydrateSessionFromDisk(tmpDir, session),
 			).resolves.toBeUndefined();
-			// Should still process valid phase - Zod may filter out null/undefined
-			expect(session.taskWorkflowStates?.size).toBeGreaterThanOrEqual(0);
+			// Pinned: a null/undefined phase rejects the whole plan; no task enters state
+			expect(session.taskWorkflowStates?.size).toBe(0);
 		});
 
 		it('should handle plan with invalid task status', async () => {
@@ -755,8 +755,8 @@ describe('rehydrateSessionFromDisk adversarial tests', () => {
 			await expect(
 				rehydrateSessionFromDisk(tmpDir, session),
 			).resolves.toBeUndefined();
-			// Invalid status may be handled gracefully or skip the task
-			expect(session.taskWorkflowStates?.size).toBeGreaterThanOrEqual(0);
+			// Invalid status skips the task: nothing enters workflow state
+			expect(session.taskWorkflowStates?.size).toBe(0);
 		});
 
 		it('should handle plan with missing task fields', async () => {

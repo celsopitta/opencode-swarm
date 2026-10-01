@@ -238,8 +238,11 @@ describe('context-budget context_pruned telemetry', () => {
 			}),
 		);
 		const providerAnchor = textMsg('provider anchor', 'assistant');
+		// A completed model call: the host only fills token fields (and reports
+		// output tokens) once the call has finished.
 		providerAnchor.info.tokens = {
-			input: 6_000,
+			input: 5_990,
+			output: 10,
 			cache: { read: 0, write: 0 },
 		};
 		const output = {

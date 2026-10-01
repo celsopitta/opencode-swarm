@@ -22,6 +22,10 @@ Three registries collaborate:
 | `languageDefinitions` | `src/lang/registry.ts` | Fine-grained tree-sitter parser entries. Intentionally has a different id space (e.g. `.tsx` → `'tsx'`, `.c` → `'c'`) because parsers are grammar-specific while profiles are dispatch-target-specific. | 20 |
 | `LANGUAGE_BACKEND_REGISTRY` | `src/lang/registry-backend.ts` | Per-language behavior overrides — `selectTestFramework`, `extractImports`, etc. When no backend is registered for a language id, the default backend (`src/lang/default-backend.ts`) is synthesized from the profile. | 3 |
 
+When the two id spaces diverge for an extension, parse identity follows the fine-grained registry id
+(e.g. `.tsx` parses with the `tsx` grammar via `resolveGrammarIdForFile` in `src/tools/syntax-check.ts`),
+while profiles stay authoritative for dispatch, detection, and reporting labels (#3013).
+
 The dispatch entry point is `pickBackend(dir)` in `src/lang/dispatch.ts` — walks up to the nearest manifest, runs language detection, returns the registered (or defaulted) backend for the dominant language. Bounded LRU cache keyed by manifest content hash.
 
 ## Step 1: Add the LanguageProfile

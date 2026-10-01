@@ -227,7 +227,7 @@ describe('FB-001 — migration renumber coverage', () => {
 
 		// listRewardEvents filtered by unitId
 		const rewardEvents = await provider.listRewardEvents({ unitId: 'task-1' });
-		expect(rewardEvents.length).toBeGreaterThanOrEqual(0); // table exists and is queryable
+		expect(rewardEvents.length).toBe(1);
 
 		// listRecallUsage filtered by unitId
 		const recallEvents = await provider.listRecallUsage!({ unitId: 'task-1' });

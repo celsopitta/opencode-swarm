@@ -803,7 +803,7 @@ describe('Baseline diffing', () => {
 		expect(result.finding_count).toBeGreaterThanOrEqual(0);
 		expect(result.verdict).toBe('pass');
 		expect(Array.isArray(result.findings)).toBe(true);
-		expect(result.findings.length).toBeGreaterThanOrEqual(0);
+		expect(result.findings.length).toBe(result.finding_count);
 	});
 
 	it('capture mode without phase returns verdict:fail (hard error, no crash)', async () => {

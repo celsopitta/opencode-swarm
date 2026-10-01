@@ -512,8 +512,8 @@ describe('Session Snapshot Integration - Adversarial Tests', () => {
 			resetSwarmState();
 			await loadSnapshot(tempDir);
 
-			// State should be valid
-			expect(swarmState.agentSessions.size).toBeGreaterThanOrEqual(0);
+			// State should be valid: both writer sessions survive the reload
+			expect(swarmState.agentSessions.size).toBe(2);
 		});
 	});
 

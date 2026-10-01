@@ -353,6 +353,15 @@ jobs:
       - name: Test file line-cap ratchet (FR-006)
         if: needs.detect-release.outputs.is-release != 'true'
         run: bun run check:test-file-cap
+      # Diff-scoped ratchet (issue #2903): fails only on NEW structurally
+      # vacuous test assertions (expect(x.length).toBeGreaterThanOrEqual(0),
+      # expect(true).toBe(true), same-literal toBe, literal toBeDefined) in
+      # changed *.test.ts files, beyond a shrink-only baseline. Deliberate
+      # probes carry an inline `// vacuous-ok: <reason>` marker.
+      # Escape hatch: VACUOUS_ASSERT_ENFORCE=0 soft-warns.
+      - name: Vacuous test-assertion ratchet (issue #2903)
+        if: needs.detect-release.outputs.is-release != 'true'
+        run: bun run scripts/check-vacuous-assertions.ts
       # AGENTS.md mandate: every user-visible PR ships a
       # docs/releases/pending/<slug>.md fragment — release-please aggregates
       # fragments into the GitHub Release body, so a missing fragment means

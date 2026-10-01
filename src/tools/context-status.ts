@@ -2,8 +2,10 @@
  * Context Status Tool
  *
  * Read-only tool that reports current context-window headroom for the active
- * session. Returns both the measured usage and the `usageSource`
- * (`provider` prompt accounting when available, otherwise `estimated`).
+ * session. Returns the usage and its `usageSource`: `provider` when the
+ * conversation has a completed model call (the host's measurement of the
+ * latest one plus an estimate of the content added since), otherwise
+ * `estimated`.
  * Derives messages from the runtime session context (via
  * `swarmState.opencodeClient.session.messages`) and resolves thresholds from
  * the plugin config, mirroring the active `createContextBudgetHandler` hook's
@@ -70,10 +72,20 @@ export interface ContextMessage {
  * Result returned by the context_status tool.
  */
 export interface ContextStatusResult {
-	/** Provider-accounted or estimated tokens used across the session */
+	/** Tokens in the conversation now: `providerTokens` plus
+	 * `pendingEstimateTokens` when a completed model call exists, otherwise a
+	 * pure estimate. */
 	tokensUsed: number;
-	/** Whether usage came from provider prompt accounting or a bounded estimate */
+	/** `provider` when a completed model call anchors the reading; `estimated`
+	 * when the session has no completed call yet. */
 	usageSource: ContextUsageSource;
+	/** Host-measured size of the last completed model call (input + output +
+	 * reasoning + cache) — the figure the OpenCode UI shows. Null when no call
+	 * has completed yet. */
+	providerTokens: number | null;
+	/** Estimate of content added since that call (tool results, new messages,
+	 * the message being generated): the only estimated part of the reading. */
+	pendingEstimateTokens: number;
 	/** Resolved model context limit in tokens */
 	modelLimit: number;
 	/** Coarse provenance class of the resolved limit (issue #2044): where the
@@ -184,6 +196,8 @@ function computeContextHeadroom(
 	return {
 		tokensUsed: usage.tokensUsed,
 		usageSource: usage.source,
+		providerTokens: usage.providerTokens,
+		pendingEstimateTokens: usage.pendingEstimateTokens,
 		modelLimit,
 		modelLimitSource: modelLimitResolution.source,
 		modelLimitResolution: modelLimitResolution.resolution,
@@ -212,15 +226,16 @@ function computeContextHeadroom(
  *
  * No arguments required — the tool queries current state automatically.
  *
- * Returns JSON with tokensUsed, usageSource, modelLimit, usagePercent,
- * thresholdCrossed, modelId, and provider.
+ * Returns JSON with tokensUsed, usageSource, providerTokens,
+ * pendingEstimateTokens, modelLimit, usagePercent, thresholdCrossed, modelId,
+ * and provider.
  */
 export { computeContextHeadroom };
 export const context_status: ReturnType<typeof createSwarmTool> =
 	createSwarmTool({
 		allowWorkingDirectoryOverride: true,
 		description:
-			'Report current context-window headroom for the active session. Returns tokens-used, usageSource (provider|estimated), model-limit with provenance (modelLimitSource: host|override|provider_cap|native|fallback; modelLimitResolution: user_provider_model|user_model|user_default|live_model_limit|static_provider_cap|static_native|static_default; fallbackActive: true when the denominator came from a static table or the flat 128k default — treat headroom as uncertain), usage-percent, threshold-state (none|warn|critical), model name, and provider. Pure read-only — no state mutation, no warning injection. Works whether context_budget.enabled is true or false.',
+			'Report current context-window headroom for the active session. Returns tokens-used, usageSource (provider|estimated), providerTokens (host-measured size of the latest completed model call — the figure the OpenCode UI shows; null before the first call completes, when the reading is a message-only estimate that excludes the system prompt and tool definitions), pendingEstimateTokens (estimated content added since that call), model-limit with provenance (modelLimitSource: host|override|provider_cap|native|fallback; modelLimitResolution: user_provider_model|user_model|user_default|live_model_limit|static_provider_cap|static_native|static_default; fallbackActive: true when the denominator came from a static table or the flat 128k default — treat headroom as uncertain), usage-percent, threshold-state (none|warn|critical), model name, and provider. Pure read-only — no state mutation, no warning injection. Works whether context_budget.enabled is true or false.',
 		args: {},
 		async execute(
 			_args: unknown,

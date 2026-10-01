@@ -71,17 +71,31 @@ export interface PostAgentUpdateParams {
 // ---------------------------------------------------------------------------
 
 /**
- * Counter for generating unique decision IDs within this module.
- * Increments monotonically across the lifetime of the module.
+ * Allocate the next durable decision ID for a context map.
+ *
+ * Derived from the decisions already present in the map being updated:
+ * the max numeric suffix among existing `A<n>` IDs + 1, computed with BigInt
+ * so suffixes past 2^53 stay exact. Mirrors `allocateSummaryId` in
+ * src/summaries/manager.ts (issue #2576 / #2720): after a process restart
+ * the map is reloaded from disk, so allocation continues after the persisted
+ * IDs instead of restarting at A1 and duplicating identity in
+ * `.swarm/context-map.json`.
+ *
+ * IDs that do not match `^A\d+$` (foreign prefixes, non-strings) are ignored
+ * rather than crashing allocation.
  */
-let decisionCounter = 0;
-
-/**
- * Generate a unique decision ID using a simple counter prefix.
- */
-function nextDecisionId(): string {
-	decisionCounter += 1;
-	return `A${decisionCounter}`;
+export function allocateDecisionId(
+	decisions: readonly DecisionEntry[],
+): string {
+	let max = 0n;
+	for (const entry of decisions) {
+		if (typeof entry?.id !== 'string') continue;
+		const match = /^A(\d+)$/.exec(entry.id);
+		if (!match) continue;
+		const value = BigInt(match[1]);
+		if (value > max) max = value;
+	}
+	return `A${(max + 1n).toString()}`;
 }
 
 /**
@@ -513,16 +527,24 @@ export function updateContextMapAfterAgent(
 		map = _internals.appendTaskHistory(map, taskSummary);
 
 		// 4. Append decisions
-		if (params.decisions) {
+		if (params.decisions && params.decisions.length > 0) {
+			// Derive the first id from the current map, then advance the suffix
+			// locally per append: O(map.decisions + decisions) total instead of
+			// rescanning the whole array per decision. Each emitted id keeps allocateDecisionId's
+			// `A<n>` output grammar (the append below reassigns `map`, so a
+			// mid-call re-derivation would see prior appends — equivalent output,
+			// just quadratic).
+			let nextSuffix = BigInt(allocateDecisionId(map.decisions).slice(1));
 			for (const entry of params.decisions) {
 				const decision: DecisionEntry = {
-					id: nextDecisionId(),
+					id: `A${nextSuffix.toString()}`,
 					decision: entry.decision,
 					rationale: entry.rationale,
 					timestamp: new Date().toISOString(),
 					task_id: params.task_id,
 				};
 				map = _internals.appendDecision(map, decision);
+				nextSuffix += 1n;
 			}
 		}
 

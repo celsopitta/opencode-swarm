@@ -907,8 +907,8 @@ function test() {
 				tempDir,
 			);
 
-			// Should use regex fallback for unsupported extensions
-			expect(result.findings.length).toBeGreaterThanOrEqual(0);
+			// Regex fallback flags the TODO in an extension-less file (line 1)
+			expect(result.findings.length).toBeGreaterThan(0);
 		});
 
 		it('should handle JSON files with regex fallback', async () => {
@@ -919,8 +919,8 @@ function test() {
 				tempDir,
 			);
 
-			// JSON is not a supported parser language, uses regex fallback
-			expect(result.findings.length).toBeGreaterThanOrEqual(0);
+			// JSON routes through the parser; a TODO in a string value is not flagged
+			expect(result.findings).toHaveLength(0);
 		});
 	});
 

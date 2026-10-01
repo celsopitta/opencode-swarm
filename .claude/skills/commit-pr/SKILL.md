@@ -183,6 +183,7 @@ bun run check:core-events
 bun run check:shell-audit
 bun run check:trajectory-store
 bun run check:test-file-cap
+bun run scripts/check-vacuous-assertions.ts
 bun run check:pending-fragment
 bun run check:gate-portability
 bun run check:bare-spawn

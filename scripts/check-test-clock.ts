@@ -14,6 +14,11 @@
  *   blocking.
  * - Files outside the diff, or already-violating files merely touched for other
  *   reasons, count as pre-existing non-blocking warnings.
+ *
+ * Scan surface (issue #2951): the walk covers BOTH `tests/**` and the in-tree
+ * `src/**` tests the CI unit job executes, with the same exclusions; the summary
+ * emits a tree-stable `Raw-clock-no-helper files (ratchet)` count over that
+ * universe.
  */
 
 import * as fs from 'node:fs';
@@ -141,12 +146,15 @@ export function evaluateClockFile(
 	};
 }
 
-function collectTestFiles(root: string): string[] {
-	const testsRoot = path.join(root, 'tests');
-	if (!fs.existsSync(testsRoot)) {
-		return [];
-	}
+/**
+ * Scan roots mirroring the CI unit job's in-tree test discovery: the `tests/` tree
+ * plus the `src/**` in-tree tests CI executes first-class (issue #1778 H4). Both
+ * roots are skipped when absent, so the gate also works on fixture repos that
+ * carry only one of them (issue #2951).
+ */
+const SCAN_ROOTS = ['tests', 'src'] as const;
 
+export function collectTestFiles(root: string): string[] {
 	const results: string[] = [];
 	const walk = (dir: string) => {
 		for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -167,7 +175,13 @@ function collectTestFiles(root: string): string[] {
 		}
 	};
 
-	walk(testsRoot);
+	for (const scanDir of SCAN_ROOTS) {
+		const scanRoot = path.join(root, scanDir);
+		if (!fs.existsSync(scanRoot)) {
+			continue;
+		}
+		walk(scanRoot);
+	}
 	results.sort();
 	return results;
 }
@@ -233,6 +247,12 @@ export async function main(startDir: string = process.cwd()): Promise<number> {
 	console.log(`New violations (blocking): ${newViolations}`);
 	console.log(
 		`Pre-existing violations (non-blocking warnings): ${preExistingViolations}`,
+	);
+	// Tree-stable ratchet count: every raw-clock-no-helper file in the scan
+	// universe, blocking ones included, so the number only changes when the
+	// violating-file set changes (issue #2951 — CI can pin ratchet <= baseline).
+	console.log(
+		`Raw-clock-no-helper files (ratchet): ${newViolations + preExistingViolations}`,
 	);
 
 	if (violations > 0) {

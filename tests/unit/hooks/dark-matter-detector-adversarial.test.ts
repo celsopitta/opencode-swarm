@@ -58,18 +58,18 @@ describe('adversarial: dark-matter-detector', () => {
 			const content = '- [ ] item1\r\n- [x] item2\r\n- [ ] item3\r\n';
 			const result = parseDarkMatterGaps(content);
 			// VULNERABILITY: The regex `$` anchor doesn't match before `\r` in CRLF
-			// This causes all items to be not parsed correctly
-			expect(result.unresolved.length).toBeGreaterThanOrEqual(0);
-			expect(result.resolved.length).toBeGreaterThanOrEqual(0);
+			// Pinned: pure CRLF input parses nothing (0/0); update consciously.
+			expect(result.unresolved).toHaveLength(0);
+			expect(result.resolved).toHaveLength(0);
 		});
 
 		it('should handle mixed CRLF and LF', () => {
 			const content = '- [ ] item1\n- [x] item2\r\n- [ ] item3\n\r';
 			const result = parseDarkMatterGaps(content);
 			// VULNERABILITY: The regex `$` anchor doesn't match before `\r` in CRLF
-			// Only LF-terminated lines are parsed correctly
-			expect(result.unresolved.length).toBeGreaterThanOrEqual(0);
-			expect(result.resolved.length).toBeGreaterThanOrEqual(0);
+			// Pinned: only the two LF-terminated items parse; item2's CRLF line skips
+			expect(result.unresolved).toHaveLength(2);
+			expect(result.resolved).toHaveLength(0);
 		});
 
 		it('should handle tabs instead of spaces', () => {

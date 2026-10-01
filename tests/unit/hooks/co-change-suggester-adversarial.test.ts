@@ -220,10 +220,10 @@ describe('adversarial: co-change-suggester', () => {
 
 			const result = await readCoChangeJson(tempDir);
 			expect(result).not.toBeNull();
-			// VULNERABILITY: Entries with null/undefined fileA/fileB are filtered out
-			// But negative npmi is accepted (should be 0-1 for NPMI)
-			expect(result?.entries.length).toBeGreaterThanOrEqual(0);
-			// Just verify the function doesn't crash when given NaN/null/undefined
+			// Null/undefined ends are filtered; negative npmi survives (VULNERABILITY).
+			expect(
+				result?.entries.every((e) => e.fileA != null && e.fileB != null),
+			).toBe(true);
 		});
 
 		it('should handle invalid JSON gracefully', async () => {

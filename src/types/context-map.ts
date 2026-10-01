@@ -79,7 +79,7 @@ export interface TaskContextSummary {
  * why certain approaches were chosen or rejected.
  */
 export interface DecisionEntry {
-	/** Unique identifier for the decision (e.g. "D1", "D2") */
+	/** Unique identifier for the decision, allocated durably as A1, A2, ... */
 	id: string;
 	/** The actual decision text describing what was decided */
 	decision: string;

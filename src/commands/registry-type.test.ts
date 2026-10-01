@@ -56,7 +56,6 @@ describe('CommandEntry type', () => {
 				const entry = COMMAND_REGISTRY[name] as CommandEntry;
 				expect(entry).toBeDefined();
 				expect(typeof entry.args).toBe('string');
-				expect(entry.args!.length).toBeGreaterThanOrEqual(0);
 			}
 		});
 

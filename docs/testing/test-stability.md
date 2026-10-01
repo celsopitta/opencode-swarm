@@ -225,9 +225,12 @@ reason; a run that self-heals everywhere is invisible to it.
 - **Merge-group greenness requires real queue runs.** A local `run-coverage-gate.sh`
   pass approximates the coverage leg but cannot prove Windows/macOS stability —
   only a real merge-group run on the 3-OS matrix can.
-- **The test-clock lint is diff-scoped.** It only blocks NEW violations; the
-  ~465 pre-existing files that touch the clock without the helper are
-  non-blocking warnings. Migrate them opportunistically when you touch a file.
+- **The test-clock lint is diff-scoped and scans both roots.** It covers every
+  `*.test.ts` file under `tests/**` and the in-tree `src/**` tests CI executes,
+  and only blocks NEW violations; the ~515 pre-existing files that touch the
+  clock without the helper (across both trees; the count moves with merges —
+  `bun run check:test-clock` prints it as the ratchet line) are non-blocking
+  warnings. Migrate them opportunistically when you touch a file.
 
 ## Reference
 

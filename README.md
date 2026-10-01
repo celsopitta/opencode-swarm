@@ -593,7 +593,7 @@ The Context Budget Guard monitors how full the model's context window is getting
 
 To disable entirely, set `context_budget.enabled: false` in your swarm config.
 
-**On-demand status check:** architects can invoke the `context_status` tool at any time to read current context-window headroom (tokens used, model limit, usage percent, threshold state, model ID, provider) without triggering advisory warnings or mutating state. Works even when `context_budget.enabled` is false.
+**On-demand status check:** architects can invoke the `context_status` tool at any time to read current context-window headroom (tokens used, the host-measured size of the last completed model call as the OpenCode UI shows it, the estimated content added since, model limit, usage percent, threshold state, model ID, provider) without triggering advisory warnings or mutating state. Works even when `context_budget.enabled` is false.
 
 ---
 

@@ -784,7 +784,7 @@ describe('listLaneEvidence Security', () => {
 
 		const result = await listLaneEvidence(sandbox, 1);
 		// Only the valid lane should be returned
-		expect(result.length).toBeGreaterThanOrEqual(0);
+		expect(result).toHaveLength(1);
 		// If the valid lane exists, it should be returned
 		const validLane = result.find((l) => l.laneId === 'test-lane');
 		expect(validLane?.laneId).toBe('test-lane');

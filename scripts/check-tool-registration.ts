@@ -83,6 +83,30 @@ export function collectToolRegistrationErrors(
 ): string[] {
 	const errors: string[] = [];
 
+	// v2 leg (issue #3004 / ADR-0003): the OpenCode 2 adapter must register
+	// tools from the SAME map the v1 host receives - no parallel tool-name
+	// list may exist under src/host/. Single-source markers: the adapter
+	// iterates the built tool map and names no tools of its own.
+	try {
+		const v2Tools = fs.readFileSync(
+			path.join(import.meta.dir, '..', 'src', 'host', 'v2', 'tools.ts'),
+			'utf8',
+		);
+		if (!v2Tools.includes('Object.entries(toolMap)')) {
+			errors.push(
+				'src/host/v2/tools.ts must register tools by iterating the shared tool map (Object.entries(toolMap)); no parallel name list.',
+			);
+		}
+		const hardcoded = v2Tools.match(/['"]swarm_[a-z0-9_]+['"]/g) ?? [];
+		if (hardcoded.length > 0) {
+			errors.push(
+				`src/host/v2/tools.ts hardcodes tool-name literals (${[...new Set(hardcoded)].slice(0, 5).join(', ')}); tool names must come from the shared map.`,
+			);
+		}
+	} catch {
+		errors.push('src/host/v2/tools.ts is missing; the v2 registration surface is required (issue #3004).');
+	}
+
 	const metaKeys = Object.keys(TOOL_METADATA);
 	const metaKeySet = new Set(metaKeys);
 	const handlerKeys = new Set(Object.keys(TOOL_MANIFEST));

@@ -60,6 +60,30 @@ const ALLOWLIST: ReadonlyArray<{
 	reason: string;
 }> = [
 	{
+		file: 'src/host/v2/agents-commands.ts',
+		snippet: 'info.system = config.prompt;',
+		count: 1,
+		reason:
+			'Issue #3004 v2 adapter: this assigns the v2 Agent.Info `system` ' +
+			'field (the v1 prompt equivalent) while constructing the mapped ' +
+			'agent object for ctx.agent.transform. It is agent registration ' +
+			'data, not a chat-transform hook output rebind — there is no ' +
+			'`output` reference in scope and no host-owned array is involved.',
+	},
+	{
+		file: 'src/host/v2/guidance.ts',
+		snippet: 'event.system = event.system ?? [];',
+		count: 1,
+		reason:
+			'Issue #3004 v2 adapter: the v2 session context hook receives the ' +
+			"host's DeepMutable SessionContext and must mutate event.system IN " +
+			'PLACE (the v2 host renders event.system natively and reads its own ' +
+			'arrays post-hook — the same class of contract as the v1 output ' +
+			'mutation rule). The nullish coalesce is defensive initialization ' +
+			'of a host-supplied array, not a rebind that discards host state; ' +
+			'the subsequent pushes are the sanctioned in-place pattern.',
+	},
+	{
 		file: 'src/index.ts',
 		snippet: 'output.messages = messagesBefore;',
 		count: 1,

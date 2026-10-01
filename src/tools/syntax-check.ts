@@ -56,6 +56,30 @@ const BINARY_NULL_THRESHOLD = 0.1; // 10% null bytes
 const SYNTAX_CHECK_CONCURRENCY = 8;
 
 /**
+ * Resolve the tree-sitter grammar id for a file path (#3013).
+ *
+ * The fine-grained parser registry (`src/lang/registry.ts`) owns parse-level
+ * grammar identity when it splits an extension away from the language profile
+ * that claims it: `.tsx` must parse with the `tsx` grammar because the
+ * `typescript` profile grammar has no JSX production. Language profiles stay
+ * authoritative for dispatch, detection, and reporting labels.
+ *
+ * Returns the registry id when the two registries diverge for the extension,
+ * the profile's `treeSitter.grammarId` otherwise, and `undefined` when no
+ * profile owns the extension (callers fall back to `getParserForFile`).
+ */
+export function resolveGrammarIdForFile(filePath: string): string | undefined {
+	const profileGrammarId = getProfileForFile(filePath)?.treeSitter?.grammarId;
+	const registryId = getLanguageForExtension(
+		path.extname(filePath).toLowerCase(),
+	)?.id;
+	if (profileGrammarId && registryId && registryId !== profileGrammarId) {
+		return registryId;
+	}
+	return profileGrammarId;
+}
+
+/**
  * Check if file content appears to be binary
  * Looks for high percentage of null bytes in first 8KB
  */
@@ -224,9 +248,11 @@ export async function computeSyntaxCheck(
 		};
 
 		try {
-			// Try profile-driven grammar resolution first (supports Tier 1–3 languages)
+			// Grammar resolution: profile-driven for Tier 1–3 languages, but the
+			// fine-grained parser registry wins when it splits an extension away
+			// from the owning profile (.tsx parses with the tsx grammar, #3013).
 			const profile = getProfileForFile(filePath);
-			const grammarId = profile?.treeSitter?.grammarId;
+			const grammarId = resolveGrammarIdForFile(filePath);
 			let parser: Parser | null = null;
 			if (grammarId) {
 				try {

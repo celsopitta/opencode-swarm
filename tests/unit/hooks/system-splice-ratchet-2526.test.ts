@@ -31,6 +31,14 @@ const SRC_DIR = path.join(REPO_ROOT, 'src');
 const ALLOWLIST = new Set([
 	'src/context/role-filter.ts',
 	'src/hooks/messages-transform.ts',
+	// src/host/v2/types.ts (issue #3004): the OpenCode 2 vendored TYPE surface.
+	// The flagged line is the V2Message role union declaration
+	// (`role: 'system' | 'user' | 'assistant' | 'tool'`) inside an interface —
+	// a type-position literal describing the host's message shape, not a
+	// role:'system' message construction. The adapter never builds system
+	// entries; v2 guidance re-homes carrier TEXT onto the host's native
+	// event.system parts surface.
+	'src/host/v2/types.ts',
 ]);
 
 const SYSTEM_CONSTRUCTION = /role:\s*['"]system['"]/;
