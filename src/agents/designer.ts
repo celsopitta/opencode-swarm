@@ -102,7 +102,7 @@ Example output structure:
 import { useState } from 'react';
 
 interface LoginFormProps {
-  onSubmit: (email: string, password: string) => Promise<void>;
+  onSubmit: (email: string, credential: string) => Promise<void>;
   onForgotPassword?: () => void;
   isLoading?: boolean;
   error?: string;
