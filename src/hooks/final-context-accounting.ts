@@ -11,13 +11,28 @@
  *   injection: knowledge, memory recall, the advisory block) via
  *   `computeContextUsage`, which prefers provider-reported token usage when a
  *   completed model call carries it;
- * - PLUS the system chain's `output.system` content (system-enhancer banners,
- *   context capsules, the swarm-command banner). Those bytes live in a separate
- *   output structure the messages chain never sees and consolidation never
- *   merges (docs/context-map.md; engineering-invariants § v6.85.1), so they are
- *   added from the per-turn injection ledger's `surface: 'system'` emissions.
- *   Messages-surface producers are attribution-only — their bytes are already
- *   inside the measurement and are NEVER added again.
+ * - PLUS, on the pure-estimate path only, the system chain's `output.system`
+ *   content (system-enhancer banners, context capsules, the swarm-command
+ *   banner). Those bytes live in a separate output structure the messages
+ *   chain never sees and consolidation never merges (docs/context-map.md;
+ *   engineering-invariants § v6.85.1), so they are added from the per-turn
+ *   injection ledger's `surface: 'system'` emissions. Messages-surface
+ *   producers are attribution-only there — their bytes are already inside the
+ *   measurement and are NEVER added again.
+ *
+ * When `computeContextUsage` is anchored on a completed model call, the
+ * host-measured count of that call already contains the system prompt the
+ * plugin composed for it AND the per-request messages-surface injections
+ * (guidance carriers, knowledge, memory recall, the advisory block) it carried.
+ * Those injections are request-local: the host never persists them, so every
+ * request rebuilds them after the anchor and the estimated tail would count
+ * them a second time. On that path the ledger is used the other way round:
+ * system-surface emissions are NOT added (the anchor has them), and the
+ * current request's messages-surface emissions are SUBTRACTED from the
+ * estimated tail, leaving the anchor plus the persisted content added since.
+ * The previous request's injections stand in for this request's; they are
+ * rebuilt from the same inputs each turn, so the two differ only by what the
+ * turn itself changed.
  *
  * The limit is resolved through the exact same ladder physical pruning uses
  * (`resolveModelLimit` with `context_budget.model_limits` overrides and the
@@ -164,20 +179,42 @@ export function createFinalContextAccountingStep(
 			// estimate.
 			const usage = computeContextUsage(messages);
 
-			// System-surface emissions from the turn ledger (bytes that live in
-			// output.system and are therefore invisible here). Messages-surface
-			// producers are skipped: their bytes are already in `usage`.
+			// Turn-ledger emissions by surface. OpenCode runs messages.transform
+			// before system.transform, so at this point the ledger holds the
+			// PREVIOUS request's system-surface emissions (begun by that request's
+			// system.transform) plus THIS request's messages-surface emissions
+			// (knowledge, memory recall, advisory drain, guidance carriers).
 			const ledger = getTurnLedgerSummary(sessionID);
 			let systemSurfaceTokens = 0;
+			let messagesSurfaceTokens = 0;
 			if (ledger) {
 				for (const producer of ledger.producers) {
 					if (producer.surface === 'system') {
 						systemSurfaceTokens += producer.emitted;
+					} else if (producer.surface === 'messages') {
+						messagesSurfaceTokens += producer.emitted;
 					}
 				}
 			}
 
-			let usedTokens = usage.tokensUsed + systemSurfaceTokens;
+			let usedTokens: number;
+			if (usage.source === 'provider' && usage.providerTokens !== null) {
+				// Anchored on a completed call: the host's count already includes
+				// that call's system prompt and its request-local messages-surface
+				// injections. The estimated tail (content after the anchor) holds
+				// this request's rebuilt injections, which would otherwise be
+				// counted twice. Keep the anchor plus the persisted tail only.
+				const persistedTailTokens = Math.max(
+					0,
+					usage.pendingEstimateTokens - messagesSurfaceTokens,
+				);
+				usedTokens = usage.providerTokens + persistedTailTokens;
+			} else {
+				// Pure estimate (no completed call yet): `messages` cannot see the
+				// system prompt, so system-surface emissions are added from the
+				// ledger. Messages-surface bytes are already inside the estimate.
+				usedTokens = usage.tokensUsed + systemSurfaceTokens;
+			}
 			const warnThreshold = config.context_budget?.warn_threshold ?? 0.7;
 			const criticalThreshold =
 				config.context_budget?.critical_threshold ?? 0.9;
@@ -252,17 +289,19 @@ export function createFinalContextAccountingStep(
 			});
 
 			log(
-				`[swarm] Final context accounting: session=${sessionID} used=${usedTokens} limit=${modelLimit} pct=${pct.toFixed(1)}% source=${usage.source} systemSurface=${systemSurfaceTokens}`,
+				`[swarm] Final context accounting: session=${sessionID} used=${usedTokens} limit=${modelLimit} pct=${pct.toFixed(1)}% source=${usage.source} systemSurface=${systemSurfaceTokens} messagesSurface=${messagesSurfaceTokens}`,
 			);
 
 			// Consume the turn ledger: this step is the LAST reader of the
 			// composition's producer accounting. Advancing the generation here
 			// guarantees a LATER turn that somehow reaches accounting without a
 			// fresh beginTurnLedger (system-enhancer skipped: native agent,
-			// disabled hook, early return) can never attribute a PRIOR turn's
-			// system-surface emissions to the current measurement. When the
-			// system-enhancer does run next turn it begins a fresh ledger
-			// regardless.
+			// disabled hook, early return) can never attribute an OLDER turn's
+			// emissions to the current measurement. (The immediately preceding
+			// request's system-surface emissions are expected here — see the
+			// ledger note above — and are only consulted on the pure-estimate
+			// path.) When the system-enhancer does run next turn it begins a
+			// fresh ledger regardless.
 			advanceTurnGeneration(sessionID);
 		} catch (error) {
 			// Fail-open: accounting must never break request composition.

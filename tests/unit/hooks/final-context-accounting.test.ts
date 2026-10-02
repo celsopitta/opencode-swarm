@@ -240,6 +240,110 @@ describe('final context accounting (#2107 §3)', () => {
 		expect(snapshot?.estimatorSource).toContain('provider-reported');
 	});
 
+	test('provider-anchored: system-surface ledger emissions are NOT added again', async () => {
+		// OpenCode runs messages.transform before system.transform, so the
+		// ledger read here holds the PREVIOUS request's system-surface emissions
+		// — the very system prompt the host already counted inside the anchor
+		// call's `input`. Adding them again was the double count observed live
+		// (73% reported against 63% shown by the host for the same call).
+		beginTurnLedger(SESSION, 4000, true);
+		recordProducerEmission(SESSION, 'system-enhancer', 3000, 0, 'system');
+		recordProducerEmission(SESSION, 'context-capsule', 1000, 0, 'system');
+
+		const step = createFinalContextAccountingStep({ config: makeConfig() });
+		const messages: MessageWithParts[] = [
+			messageOf('user', TEXT_10K_TOKENS),
+			{
+				info: {
+					role: 'assistant',
+					sessionID: SESSION,
+					tokens: { input: 40_000, output: 10, cache: { read: 0, write: 0 } },
+				},
+				parts: [{ type: 'text', text: 'done' }],
+			} as unknown as MessageWithParts,
+			messageOf('user', 'next turn'),
+		];
+		await step({}, { messages });
+		const snapshot = getFinalPromptPressure(SESSION);
+		expect(snapshot?.providerReported).toBe(true);
+		// anchor (40,010) + the persisted tail ('next turn', a few tokens); the
+		// 4,000 system-surface tokens must not appear.
+		expect(snapshot?.usedTokens).toBeGreaterThanOrEqual(40_010);
+		expect(snapshot?.usedTokens).toBeLessThan(40_100);
+	});
+
+	test("provider-anchored: this request's messages-surface injections are removed from the tail", async () => {
+		// Messages-surface producers (knowledge, memory recall, advisory drain,
+		// guidance carriers) are rebuilt on every request and sit after the
+		// anchor, while the anchor already counted the previous request's copies.
+		beginTurnLedger(SESSION, 4000, true);
+		recordProducerEmission(SESSION, 'knowledge-injector', 2000, 0, 'messages');
+		recordProducerEmission(SESSION, 'advisory-queue', 1000, 0, 'messages');
+
+		const step = createFinalContextAccountingStep({ config: makeConfig() });
+		const messages: MessageWithParts[] = [
+			{
+				info: {
+					role: 'assistant',
+					sessionID: SESSION,
+					tokens: { input: 40_000, output: 10, cache: { read: 0, write: 0 } },
+				},
+				parts: [{ type: 'text', text: 'done' }],
+			} as unknown as MessageWithParts,
+			// Persisted tail (~10,000 tokens) plus the injected copies (~3,000
+			// tokens of text that the ledger attributes to messages producers).
+			messageOf('user', TEXT_10K_TOKENS),
+			messageOf('user', 'x'.repeat(9_000)),
+		];
+		await step({}, { messages });
+		const snapshot = getFinalPromptPressure(SESSION);
+		expect(snapshot?.providerReported).toBe(true);
+		// anchor (40,010) + ~13,000 estimated tail − 3,000 ledger-attributed
+		// injections ≈ 50,010.
+		expect(snapshot?.usedTokens).toBeGreaterThanOrEqual(49_800);
+		expect(snapshot?.usedTokens).toBeLessThan(50_300);
+	});
+
+	test('provider-anchored: the tail never goes below zero when the ledger over-attributes', async () => {
+		beginTurnLedger(SESSION, 4000, true);
+		recordProducerEmission(
+			SESSION,
+			'knowledge-injector',
+			50_000,
+			0,
+			'messages',
+		);
+
+		const step = createFinalContextAccountingStep({ config: makeConfig() });
+		const messages: MessageWithParts[] = [
+			{
+				info: {
+					role: 'assistant',
+					sessionID: SESSION,
+					tokens: { input: 40_000, output: 10, cache: { read: 0, write: 0 } },
+				},
+				parts: [{ type: 'text', text: 'done' }],
+			} as unknown as MessageWithParts,
+			messageOf('user', 'next turn'),
+		];
+		await step({}, { messages });
+		const snapshot = getFinalPromptPressure(SESSION);
+		// The host-measured anchor is the floor: 40,010 exactly.
+		expect(snapshot?.usedTokens).toBe(40_010);
+	});
+
+	test('pure estimate: messages-surface emissions are not subtracted (their bytes are measured)', async () => {
+		beginTurnLedger(SESSION, 4000, true);
+		recordProducerEmission(SESSION, 'knowledge-injector', 5000, 0, 'messages');
+
+		const step = createFinalContextAccountingStep({ config: makeConfig() });
+		await step({}, { messages: [messageOf('user', TEXT_10K_TOKENS)] });
+		const snapshot = getFinalPromptPressure(SESSION);
+		expect(snapshot?.providerReported).toBe(false);
+		expect(snapshot?.usedTokens).toBeGreaterThanOrEqual(9_900);
+		expect(snapshot?.usedTokens).toBeLessThan(10_200);
+	});
+
 	test('fail-open: disabled context_budget writes nothing', async () => {
 		const step = createFinalContextAccountingStep({
 			config: makeConfig({ enabled: false }),
