@@ -24,10 +24,13 @@ prompt is invisible to that estimate.
 The host's count for the anchor call already contains two things the ledger
 also records:
 
-- the system prompt the plugin composed for that call (system-surface
-  emissions). OpenCode runs `messages.transform` before `system.transform`, so
-  the ledger read at accounting time holds the previous request's system
-  emissions — exactly what the anchor counted;
+- the system prompt the plugin composed for that call. For sessions whose
+  `system.transform` enhancer runs (sub-agents), OpenCode's
+  `messages.transform`-before-`system.transform` order means the ledger read at
+  accounting time holds the previous request's system-surface emissions — the
+  content the anchor counted. For a session-bound architect the system-surface
+  enhancer begins no ledger; its guidance travels on a messages-surface
+  carrier and is covered by the next point;
 - the per-request messages-surface injections (guidance carriers, knowledge,
   memory recall, the advisory block). The host never persists them, so every
   request rebuilds them after the anchor and the estimated tail counted them a
@@ -50,7 +53,15 @@ host's own count reaches them.
 - The previous request's injections stand in for this request's. They are
   rebuilt from the same inputs each turn, so the two differ only by what the
   turn itself changed (a new knowledge directive, a drained advisory).
-- `context_status` and the context-budget pruning hook measure persisted
-  messages only and were never affected; after this change the three readings
-  agree on the provider-anchored path apart from the advisory's own tokens.
+- The subtraction needs a ledger. When none exists at accounting time (a
+  native agent, a session without identity, the architect's compaction-pending
+  turn), messages-surface emissions are dropped on record, nothing is
+  subtracted, and the tail still counts that request's injections as before.
+- `context_status` measures persisted messages only and was never affected.
+  The context-budget pruning hook runs early in the chain and sees only the
+  two injections placed before it. After this change the readings agree on the
+  provider-anchored path up to the remaining over-count sources: the advisories'
+  own tokens, the context-budget hook's warning (not ledger-recorded), and the
+  gap between a producer's recorded estimate and its fenced carrier text. All of
+  them err towards reporting more, never less.
 - The debug log line now reports both `systemSurface=` and `messagesSurface=`.

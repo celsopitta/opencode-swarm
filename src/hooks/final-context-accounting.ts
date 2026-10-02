@@ -27,9 +27,12 @@
  * Those injections are request-local: the host never persists them, so every
  * request rebuilds them after the anchor and the estimated tail would count
  * them a second time. On that path the ledger is used the other way round:
- * system-surface emissions are NOT added (the anchor has them), and the
- * current request's messages-surface emissions are SUBTRACTED from the
- * estimated tail, leaving the anchor plus the persisted content added since.
+ * system-surface emissions are NOT added (the anchor has them — and for a
+ * session-bound architect the ledger carries none anyway), and the current
+ * request's messages-surface emissions are SUBTRACTED from the estimated
+ * tail, leaving the anchor plus the persisted content added since. Without a
+ * ledger (native agent, no identity, the compaction-pending turn) nothing is
+ * recorded, so nothing is subtracted and the tail is used unreduced.
  * The previous request's injections stand in for this request's; they are
  * rebuilt from the same inputs each turn, so the two differ only by what the
  * turn itself changed.
@@ -180,10 +183,18 @@ export function createFinalContextAccountingStep(
 			const usage = computeContextUsage(messages);
 
 			// Turn-ledger emissions by surface. OpenCode runs messages.transform
-			// before system.transform, so at this point the ledger holds the
-			// PREVIOUS request's system-surface emissions (begun by that request's
-			// system.transform) plus THIS request's messages-surface emissions
-			// (knowledge, memory recall, advisory drain, guidance carriers).
+			// before system.transform, so what the ledger holds here depends on
+			// who began it:
+			// - sessions whose system.transform enhancer runs (sub-agents): the
+			//   PREVIOUS request's system-surface emissions, plus THIS request's
+			//   messages-surface emissions (knowledge, memory recall, advisory
+			//   drain, guidance carriers);
+			// - a session-bound architect: the system-surface enhancer returns
+			//   without beginning a ledger, so this request's messages stage began
+			//   it and it holds only this request's messages-surface emissions
+			//   (its guidance travels on a carrier, counted there).
+			// When no ledger exists (native agent, no identity, the compaction-
+			// pending turn), both sums are zero and the tail is used unreduced.
 			const ledger = getTurnLedgerSummary(sessionID);
 			let systemSurfaceTokens = 0;
 			let messagesSurfaceTokens = 0;
