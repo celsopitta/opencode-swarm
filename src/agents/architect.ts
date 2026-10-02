@@ -739,18 +739,18 @@ Available Tools: {{AVAILABLE_TOOLS}}
 
 ## DELEGATION FORMAT
 
-Mutation delegations are performed by calling the **Task** tool. Read-only advisory lanes are the explicit exception: dispatch them with \`dispatch_lanes_async\` plus incremental \`collect_lane_results\` polls (no \`wait\` / \`wait: false\`) before a final \`wait: true\` join, or blocking \`dispatch_lanes\` only when async is unavailable. Never turn advisory lanes into a per-agent Task/run-in-background pattern. Writing delegation text into the chat does nothing — the agent will not receive it. Every mutation delegation below is the content you pass to the Task tool, not text you output to the conversation.
+Mutation delegations are performed by calling the **Task** tool. Read-only advisory lanes are the explicit exception: dispatch them with \`dispatch_lanes_async\` plus incremental \`collect_lane_results\` polls (no \`wait\` / \`wait: false\`) before a final \`wait: true\` join, or blocking \`dispatch_lanes\` only when async is unavailable. Never turn advisory lanes into a per-agent Task/run-in-background pattern. Writing delegation text into the chat does nothing — the agent will not receive it; every mutation delegation below is the content you pass to the Task tool.
 
 All delegations MUST follow the receiving agent's INPUT FORMAT exactly. Do NOT invent fields, omit required fields, or force one agent's schema onto another. Every delegation MUST begin with the agent name, include \`TASK:\`, and include \`SKILLS:\` when that agent prompt supports skills.
 Do NOT add conversational preamble before the agent prefix. Begin directly with the agent name.
 
-TASK ATTRIBUTION: For task-scoped delegations, put the exact numeric plan task ID
-alone on a standalone \`TASK:\` line (for example, \`TASK: 1.1\`) and put the objective
-on the following line. Leave the Task tool's \`task_id\` argument unset: it is a
-session handle for resuming a sub-agent, and the host rejects any other value. Keep
-the numeric ID consistent across the TASK line and any acceptance text.
-Plan-level critics and other project-wide reviews must omit task attribution rather
-than guessing from ambient prose or session state.
+TASK ATTRIBUTION: task-scoped delegations put the exact numeric plan task ID
+alone on a standalone \`TASK:\` line (for example, \`TASK: 1.1\`), then the objective
+on the next line. Leave the Task tool's \`task_id\` argument unset (a sub-agent
+session handle); only a PR-feedback coder dispatch with a prepared feedback scope
+passes its numeric feedback task id there. Keep the ID consistent across the TASK
+line and any acceptance text. Plan-level critics and other project-wide reviews must
+omit task attribution rather than guessing from ambient prose or session state.
 
 {{AGENT_PREFIX}}[agent]
 TASK: [single objective]

@@ -165,7 +165,7 @@ describe('Task.task_id host contract through the exported hooks', () => {
 				'utf8',
 			),
 		) as { abortReason?: string };
-		expect(wal.abortReason).toContain('failed in the host');
+		expect(wal.abortReason).toContain('before the sub-agent ran');
 
 		// The retry is admitted instead of CODER_DISPATCH_IN_PROGRESS.
 		const retryCallID = 'chatcmpl-tool-retry-0002';
@@ -184,6 +184,55 @@ describe('Task.task_id host contract through the exported hooks', () => {
 		} finally {
 			await plugin.hooks['tool.execute.after'](
 				{ tool: 'Task', sessionID: SESSION, callID: retryCallID },
+				{ title: 'done', output: 'ok', metadata: {} },
+			);
+		}
+	});
+
+	test('an errored Task part that carries a child session id is NOT rolled back (abort / child failure)', async () => {
+		// The host publishes state.metadata.sessionId before the child runs and
+		// keeps it on a user abort ("Tool execution aborted") and on a child
+		// failure. Such a part may stand for real work: it stays DISPATCHED for
+		// the recovery path instead of being aborted here.
+		const callID = 'chatcmpl-tool-child-ran-0004';
+		const output = {
+			args: { prompt: PROMPT, subagent_type: 'coder' } as Record<
+				string,
+				unknown
+			>,
+		};
+		await plugin.hooks['tool.execute.before'](
+			{ tool: 'Task', sessionID: SESSION, callID },
+			output,
+		);
+		expect(walState(dir)).toBe('DISPATCHED');
+		await plugin.hooks.event({
+			event: {
+				type: 'message.part.updated',
+				properties: {
+					part: {
+						id: 'prt_child_ran_0004',
+						sessionID: SESSION,
+						messageID: 'msg_child_ran_0004',
+						type: 'tool',
+						callID,
+						tool: 'task',
+						state: {
+							status: 'error',
+							input: output.args,
+							error: 'Tool execution aborted',
+							metadata: { sessionId: 'ses_child_ran_0004', interrupted: true },
+							time: { start: 1, end: 2 },
+						},
+					},
+				},
+			},
+		});
+		try {
+			expect(walState(dir)).toBe('DISPATCHED');
+		} finally {
+			await plugin.hooks['tool.execute.after'](
+				{ tool: 'Task', sessionID: SESSION, callID },
 				{ title: 'done', output: 'ok', metadata: {} },
 			);
 		}

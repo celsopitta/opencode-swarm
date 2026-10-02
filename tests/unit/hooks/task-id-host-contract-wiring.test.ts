@@ -48,14 +48,19 @@ describe('Task.task_id strip wiring', () => {
 		const eventStart = source.indexOf("'message.part.updated'");
 		expect(eventStart).toBeGreaterThan(0);
 		const rollbackIdx = source.indexOf(
-			'Task tool failed in the host after the dispatch was admitted',
+			'Task tool failed in the host before the sub-agent ran',
 		);
 		expect(rollbackIdx).toBeGreaterThan(0);
-		const branchStart = source.indexOf('// Host-side Task failure (v1 hosts)');
+		const branchStart = source.indexOf(
+			'// Host-side Task failure BEFORE the child ran',
+		);
 		expect(branchStart).toBeGreaterThan(0);
 		expect(branchStart).toBeLessThan(rollbackIdx);
 		const branch = source.slice(branchStart, rollbackIdx);
 		expect(branch).toContain("part.state?.status === 'error'");
+		// Only a part WITHOUT a child session id (host rejected the call before
+		// any sub-agent existed) may be rolled back.
+		expect(branch).toContain('state?.metadata?.sessionId');
 		expect(branch).not.toContain("'completed'");
 		expect(branch).not.toContain("'running'");
 	});
