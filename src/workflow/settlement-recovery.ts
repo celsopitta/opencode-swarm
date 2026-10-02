@@ -7,6 +7,7 @@ import {
 import { sanitizeDiagnosticText } from '../scope/path-identity.js';
 import { ensureAgentSession } from '../state.js';
 import { listCoderSettlementWalStates } from './coder-settlement.js';
+import { reconcileSessionWorkflowWithEvidence } from './session-workflow-sync.js';
 import {
 	appendStageARepairEvent,
 	hasGreenPostSettlementPreCheck,
@@ -126,6 +127,10 @@ export async function recoverStageATaskSupervised(
 		workflow.state === 'reviewer_run' ||
 		workflow.state === 'tests_run'
 	) {
+		// The durable state is already past Stage A, but this session may still
+		// hold an older state (the recovery ran in another session or another
+		// process). Bring it in line with the evidence.
+		reconcileSessionWorkflowWithEvidence(session, taskId, evidence);
 		return {
 			taskId,
 			generation: workflow.generation,
@@ -192,6 +197,10 @@ export async function recoverStageATaskSupervised(
 		transitionId,
 	});
 	const updatedWorkflow = getTaskWorkflowSnapshot(updated);
+	// The caller's session still holds the wedge state (idle / blocked). The
+	// Stage B settlement path reads the session copy; reconcile it now so the
+	// session is consistent as soon as the tool returns.
+	reconcileSessionWorkflowWithEvidence(session, taskId, updated);
 
 	// Best-effort audit event through the shared #2665 stage_a_repair wrapper;
 	// the durable transition above is authoritative, and the append outcome is

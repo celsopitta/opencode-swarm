@@ -154,6 +154,7 @@ import {
 	releaseCoderDispatchOwnership,
 	settleCoderDispatch,
 } from '../workflow/coder-settlement.js';
+import { reconcileSessionWorkflowWithEvidence } from '../workflow/session-workflow-sync.js';
 import { recoverPreparedTaskRepair } from '../workflow/task-repair.js';
 import { recoverPreparedTaskTerminal } from '../workflow/task-terminal.js';
 import { recordDeadLaneReclaim } from './delegation-gate/dead-lane-reclaim';
@@ -4844,9 +4845,32 @@ export function createDelegationGateHook(
 				}
 			}
 			for (const taskId of candidateTaskIds) {
-				const workflow = getTaskWorkflowSnapshot(
-					await readTaskEvidence(directory, taskId),
-				);
+				const admissionEvidence = await readTaskEvidence(directory, taskId);
+				const workflow = getTaskWorkflowSnapshot(admissionEvidence);
+				// Admission is decided from the durable workflow, settlement from
+				// the session's copy. When the durable workflow was rewritten
+				// outside this session's own transitions (a supervised recovery,
+				// `/swarm recover`, another process), the session still holds the
+				// older state: this dispatch would be admitted and its verdict
+				// then skipped as "not Stage B eligible". The durable state this
+				// admission is about to accept is authoritative, so bring the
+				// session in line with it first. Every candidate task that is
+				// admitted this way is reconciled, including tasks that are only
+				// mentioned in the prompt. Council state is not touched: the
+				// council block below still binds a generation only when none
+				// is recorded.
+				if (
+					(targetAgent === 'reviewer' || targetAgent === 'test_engineer') &&
+					workflow.authoritative &&
+					(workflow.state === 'pre_check_passed' ||
+						workflow.state === 'reviewer_run')
+				) {
+					reconcileSessionWorkflowWithEvidence(
+						stageBSession,
+						taskId,
+						admissionEvidence,
+					);
+				}
 				if (
 					taskId === resolvedTaskId &&
 					(await isCouncilGateActive(directory, config.council))

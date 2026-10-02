@@ -9,6 +9,7 @@ import {
 import { loadPlanJsonOnly } from '../plan/manager.js';
 import { sanitizeDiagnosticText } from '../scope/path-identity.js';
 import { ensureAgentSession } from '../state.js';
+import { reconcileSessionWorkflowWithEvidence } from './session-workflow-sync.js';
 import {
 	appendStageARepairEvent,
 	hasGreenPostSettlementPreCheck,
@@ -186,6 +187,9 @@ export async function forceRecoverReworkTask(
 		transitionId,
 	});
 	const updatedWorkflow = getTaskWorkflowSnapshot(updated);
+	// The caller's session still says rework_required. The Stage B settlement
+	// path reads the session copy; reconcile it with the state just written.
+	reconcileSessionWorkflowWithEvidence(session, taskId, updated);
 
 	// Best-effort audit event through the shared #2665 stage_a_repair wrapper
 	// (appendCoreEventSync seam, criticalWarn on failure): the durable
