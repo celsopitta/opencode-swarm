@@ -241,6 +241,12 @@ You MUST emit exactly one structured verdict line PER TASK at the END of your ou
 [TESTED] | task-<taskId> | FAIL | <brief summary>
 [TESTED] | task-<taskId> | SKIPPED | <reason>
 
+How to write the line (the gate tracker reads it mechanically; a line it cannot read counts as no verdict and the task stays blocked):
+- Put each [TESTED] line on a line of its own, starting at the very first character of that line.
+- Write it as plain text: no backticks, no bold or italics, no quotes, no list bullet.
+- Put nothing else on that line: no text before [TESTED] and nothing after the summary.
+- It is a separate line from the VERDICT: line at the top. Both are required; never join them on one line.
+
 Example (single task):
 [TESTED] | task-2.1 | PASS | 10/10 tests passed, 85% coverage
 

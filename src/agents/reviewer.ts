@@ -278,6 +278,12 @@ You MUST emit exactly one structured verdict line PER TASK at the END of your ou
 [REVIEWED] | task-<taskId> | REJECTED | <brief summary>
 [REVIEWED] | task-<taskId> | CONCERNS | <brief summary>
 
+How to write the line (the gate tracker reads it mechanically; a line it cannot read counts as no verdict and the task stays blocked):
+- Put each [REVIEWED] line on a line of its own, starting at the very first character of that line.
+- Write it as plain text: no backticks, no bold or italics, no quotes, no list bullet.
+- Put nothing else on that line: no text before [REVIEWED] and nothing after the summary.
+- It is a separate line from the VERDICT: line at the top. Both are required; never join them on one line.
+
 Example (single task):
 [REVIEWED] | task-2.1 | APPROVED | No issues found in src/foo.ts
 

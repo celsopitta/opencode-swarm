@@ -17,7 +17,7 @@ import {
 	recordPrWorkflowStartupState,
 	resetPrWorkflowStartupState,
 } from '../../../src/pr-review/enablement';
-import { resetSwarmState } from '../../../src/state';
+import { ensureAgentSession, resetSwarmState } from '../../../src/state';
 import { createIsolatedTestEnv } from '../../helpers/isolated-test-env.js';
 import {
 	PR_ARTIFACT_HEAD_SHA,
@@ -144,6 +144,43 @@ describe('delegation gate PR-review re-entry bypass (issue #2383)', () => {
 			),
 		).authorizations as Array<{ consumedAt?: string }>;
 		expect(store.some((entry) => entry.consumedAt)).toBe(true);
+	});
+
+	test('an authorized re-entry reply without a Stage B row is not reported as a dropped settlement', async () => {
+		// The re-entry dispatch carries a task id but binds no task for Stage B
+		// settlement, so no row could settle there and a missing row is not a
+		// drop. Reporting it would tell the architect to re-dispatch a gate
+		// that cannot be re-dispatched without a fresh authorization.
+		await seedPreStageATask('1.1');
+		await activatePrWorkflow(tmpDir, PR_ARTIFACT_SESSION_ID, 'PR_REVIEW', {
+			prHeadSha: PR_ARTIFACT_HEAD_SHA,
+		});
+		await issuePrReviewReentryAuthorization(tmpDir, PR_ARTIFACT_SESSION_ID, {
+			prHeadSha: PR_ARTIFACT_HEAD_SHA,
+			role: 'reviewer',
+		});
+		const hook = createDelegationGateHook(config, tmpDir);
+		const args = {
+			subagent_type: 'reviewer',
+			task_id: '1.1',
+			prompt:
+				'TASK: 1.1\nACCEPTANCE: Verify the exact task and report a bound positive verdict.',
+		};
+		const call = {
+			tool: 'Task',
+			sessionID: PR_ARTIFACT_SESSION_ID,
+			callID: 'call-reentry-no-row',
+		};
+		await hook.toolBefore(call, { args });
+		await hook.toolAfter(
+			{ ...call, args },
+			{ output: 'VERDICT: APPROVED\nNo structured Stage B row here.' },
+		);
+
+		const dropped = (
+			ensureAgentSession(PR_ARTIFACT_SESSION_ID).pendingAdvisoryMessages ?? []
+		).filter((m) => m.includes('STAGE B SETTLEMENT DROPPED'));
+		expect(dropped).toEqual([]);
 	});
 
 	test('the bypass is one-use: a second dispatch hits Stage-A again', async () => {

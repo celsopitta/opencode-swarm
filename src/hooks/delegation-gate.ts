@@ -3470,13 +3470,17 @@ function sanitizeDenialText(value: string): string {
  * reason class exists so the drop is never silent — each class maps to an
  * operator-readable summary and, for `rejection_persist_failed`, a distinct
  * remedy (that leg persists a REJECTED verdict, not a clean one).
+ * `verdict_missing` is the leg where the reply carried no parseable verdict
+ * row for a dispatched task: nothing is recorded and the task state is left
+ * untouched, so the remedy is a re-dispatch that states the row format.
  */
 type StageBSettlementDropReason =
 	| 'unbound'
 	| 'route_blocked'
 	| 'route_capacity'
 	| 'evidence_rejected'
-	| 'rejection_persist_failed';
+	| 'rejection_persist_failed'
+	| 'verdict_missing';
 
 /** Human-readable drop-class summary reused by the aggregated host-log line. */
 const STAGE_B_SETTLEMENT_DROP_REASONS: Record<
@@ -3490,7 +3494,35 @@ const STAGE_B_SETTLEMENT_DROP_REASONS: Record<
 	evidence_rejected:
 		'gate evidence recording rejected the settlement (generation fencing)',
 	rejection_persist_failed: 'the rejection verdict could not be persisted',
+	verdict_missing:
+		'the reply had no parseable verdict row (a row must start its own line as plain text)',
 };
+
+/** Marker of the verdict row a Stage B gate agent must emit. */
+function stageBVerdictMarker(agent: string): '[TESTED]' | '[REVIEWED]' {
+	return agent === 'test_engineer' ? '[TESTED]' : '[REVIEWED]';
+}
+
+/**
+ * The verdict row format for one task, with the verdict left as a choice so
+ * the advisory never suggests an outcome.
+ */
+function stageBVerdictRowTemplate(agent: string, taskId: string): string {
+	const verdicts =
+		agent === 'test_engineer'
+			? 'PASS, FAIL or SKIPPED'
+			: 'APPROVED, REJECTED or CONCERNS';
+	return `${stageBVerdictMarker(agent)} | task-${taskId} | <${verdicts}> | <brief summary>`;
+}
+
+/**
+ * Tells the architect when to stop instead of looping on a worker that never
+ * writes a readable row. This is guidance in the advisory text, not an
+ * enforced bound: no retry state is kept, and the advisory is delivered once
+ * per turn, so recognizing a repeat is up to the architect.
+ */
+const STAGE_B_VERDICT_MISSING_REPEAT_NOTE =
+	'If this advisory repeats for the same agent and task after a re-dispatch, stop re-dispatching and report the unreadable reply to the user.';
 
 /**
  * Queue the session-visible advisory for one dropped Stage B settlement and
@@ -3509,6 +3541,13 @@ function warnStageBSettlementDropped(
 		reasonClass: StageBSettlementDropReason;
 		detail: string;
 		drops: Map<StageBSettlementDropReason, string[]>;
+		/**
+		 * `verdict_missing` only: set when the dispatch has no task of its own
+		 * and the whole reply was unreadable. The advisory then speaks about
+		 * the dispatch and asks for one row per awaited task; `taskId` (the
+		 * first awaited id) only keys the dedupe token.
+		 */
+		dispatchWide?: boolean;
 	},
 ): void {
 	const { taskId, agent, reasonClass, drops } = params;
@@ -3520,7 +3559,19 @@ function warnStageBSettlementDropped(
 	// pushAdvisory's keyed dedupe matches on key-presence in queued messages.
 	// The closing bracket terminates the key so a prefix task id (1.1 vs 1.10)
 	// can never substring-match another task's queued message.
-	const dedupeToken = `[stageb-settlement-drop:${reasonClass}:${taskId}]`;
+	// A missing verdict row is specific to the agent that replied: reviewer
+	// and test_engineer can both return an unreadable reply for the same task
+	// in one turn, and each needs its own re-dispatch, so that class keys on
+	// the agent as well.
+	// The dispatch-wide variant carries its own segment so it can never be
+	// suppressed by, or suppress, the per-task advisory of the same agent for
+	// the task that happens to be listed first.
+	const dedupeToken =
+		reasonClass === 'verdict_missing'
+			? params.dispatchWide
+				? `[stageb-settlement-drop:${reasonClass}:${agent}:dispatch:${taskId}]`
+				: `[stageb-settlement-drop:${reasonClass}:${agent}:${taskId}]`
+			: `[stageb-settlement-drop:${reasonClass}:${taskId}]`;
 	// Control-char hygiene (same policy as sanitizeDenialText): callID is
 	// host-supplied and detail embeds internal error text; neither may forge
 	// multi-line advisory content or drive terminal escape sequences.
@@ -3531,9 +3582,19 @@ function warnStageBSettlementDropped(
 			? `${dedupeToken} STAGE B SETTLEMENT DROPPED: ${agent} task ${taskId} from call ${safeCallID}: ${safeDetail}. ` +
 				`The rejection verdict was not persisted (fail-closed); the task stays at its current state. ` +
 				`Remedy: inspect .swarm/ evidence storage for this task and retry the rejection transition (the verdict need not be re-earned).`
-			: `${dedupeToken} STAGE B SETTLEMENT DROPPED: ${agent} task ${taskId} from call ${safeCallID}: ${safeDetail}.${restartNote} ` +
-				`The clean verdict was not recorded (fail-closed); the task stays at its current state. ` +
-				`Remedy: re-dispatch the ${agent} gate for task ${taskId}.`;
+			: reasonClass === 'verdict_missing'
+				? params.dispatchWide
+					? `${dedupeToken} STAGE B SETTLEMENT DROPPED: ${agent} dispatch from call ${safeCallID}: ${safeDetail}. ` +
+						`No verdict was recorded (fail-closed); the tasks stay at their current state. ` +
+						`Remedy: re-dispatch the ${agent} gate and require one verdict row per task, each on its own line, as plain text with nothing else on that line: ${stageBVerdictRowTemplate(agent, '<taskId>')}. ` +
+						'If this advisory repeats for the same agent after a re-dispatch, stop re-dispatching and report the unreadable reply to the user.'
+					: `${dedupeToken} STAGE B SETTLEMENT DROPPED: ${agent} task ${taskId} from call ${safeCallID}: ${safeDetail}. ` +
+						`No verdict was recorded (fail-closed); the task stays at its current state. ` +
+						`Remedy: re-dispatch the ${agent} gate for task ${taskId} and require the verdict row on its own line, as plain text with nothing else on that line: ${stageBVerdictRowTemplate(agent, taskId)}. ` +
+						STAGE_B_VERDICT_MISSING_REPEAT_NOTE
+				: `${dedupeToken} STAGE B SETTLEMENT DROPPED: ${agent} task ${taskId} from call ${safeCallID}: ${safeDetail}.${restartNote} ` +
+					`The clean verdict was not recorded (fail-closed); the task stays at its current state. ` +
+					`Remedy: re-dispatch the ${agent} gate for task ${taskId}.`;
 	pushAdvisory(session, message, {
 		dedupeKey: dedupeToken,
 	});
@@ -6424,41 +6485,79 @@ export function createDelegationGateHook(
 									string[]
 								>();
 								do {
-									if (attributionResult.verdicts.size === 0) {
-										const dispatchCtx = stageBDispatchContextByCallID.get(
-											input.callID,
-										);
-										const expectedTasks = dispatchCtx
-											? [...dispatchCtx.taskIds].join(', ')
-											: (gateDispatchPrimaryTaskByCallID.get(input.callID) ??
-												'unknown');
-										logger.warn(
-											`[delegation-gate] STAGE_B_ATTRIBUTION_MISSING: ${targetAgent} dispatch for call ${input.callID} returned no structured verdict lines. Expected tasks: ${expectedTasks}. Agent output must include [REVIEWED] or [TESTED] verdict lines.`,
-										);
-										const failClosedTaskIds = dispatchCtx
-											? [...dispatchCtx.taskIds]
-											: gateDispatchPrimaryTaskByCallID.has(input.callID)
-												? [gateDispatchPrimaryTaskByCallID.get(input.callID)!]
-												: [];
-										for (const failTaskId of failClosedTaskIds) {
-											const failState =
-												session.taskWorkflowStates.get(failTaskId);
-											if (
-												failState &&
-												(stageBEligibleStates as readonly string[]).includes(
-													failState,
-												)
-											) {
-												session.taskWorkflowStates.set(
-													failTaskId,
-													'rework_required',
-												);
-												session.stageBCompletion?.delete(failTaskId);
-												logger.warn(
-													`[delegation-gate] STAGE_B_ATTRIBUTION_MISSING fail-closed: task ${failTaskId} → rework_required`,
-												);
-											}
+									// A reply that carries no parseable verdict row for the
+									// task it was dispatched for is not settled: no gate
+									// evidence is recorded and the task state is left
+									// exactly as it was, in memory and on disk, so the
+									// same gate can be dispatched again and settle. The
+									// drop is reported to the architect; before this it
+									// moved the task to rework_required in the session map
+									// only, which no durable state or recovery path agreed
+									// with.
+									//
+									// One advisory per reply at most. It names the
+									// dispatch's own task (resolved from task_id or an
+									// unambiguous prompt id). The other ids in the dispatch
+									// context can come from task numbers that merely appear
+									// in the prompt text, so they are never reported one by
+									// one; they are listed only when the dispatch has no
+									// task of its own and the reply had no row at all.
+									const dispatchCtx = stageBDispatchContextByCallID.get(
+										input.callID,
+									);
+									const primaryTaskId = gateDispatchPrimaryTaskByCallID.get(
+										input.callID,
+									);
+									const awaitedTaskIds = dispatchCtx
+										? [...dispatchCtx.taskIds]
+										: [];
+									const marker = stageBVerdictMarker(targetAgent);
+									const noRows = attributionResult.verdicts.size === 0;
+									const boundList = (ids: string[]): string =>
+										ids.slice(0, 10).join(', ') +
+										(ids.length > 10 ? ` (+${ids.length - 10} more)` : '');
+									// The primary task is reported only when this dispatch
+									// awaited a Stage B verdict for it. A PR-review
+									// re-entry dispatch carries a task id but binds no
+									// task for settlement (its context is empty): no row
+									// could settle there, so a missing row is not a drop.
+									if (primaryTaskId && awaitedTaskIds.includes(primaryTaskId)) {
+										if (!attributionResult.verdicts.has(primaryTaskId)) {
+											const others = awaitedTaskIds.filter(
+												(id) => id !== primaryTaskId,
+											);
+											warnStageBSettlementDropped(session, {
+												taskId: primaryTaskId,
+												agent: targetAgent,
+												callID: input.callID,
+												reasonClass: 'verdict_missing',
+												detail:
+													`the reply had no parseable ${marker} verdict row for this task` +
+													(noRows && others.length > 0
+														? ` (rows were also awaited for: ${boundList(others)})`
+														: ''),
+												drops: stageBSettlementDrops,
+											});
 										}
+									} else if (
+										!primaryTaskId &&
+										noRows &&
+										awaitedTaskIds.length > 0
+									) {
+										warnStageBSettlementDropped(session, {
+											taskId: awaitedTaskIds[0]!,
+											agent: targetAgent,
+											callID: input.callID,
+											reasonClass: 'verdict_missing',
+											detail: `the reply had no parseable ${marker} verdict row at all (rows were awaited for: ${boundList(awaitedTaskIds)})`,
+											drops: stageBSettlementDrops,
+											dispatchWide: true,
+										});
+									}
+									if (attributionResult.verdicts.size === 0) {
+										logger.warn(
+											`[delegation-gate] STAGE_B_ATTRIBUTION_MISSING: ${targetAgent} dispatch for call ${input.callID} returned no structured verdict lines. Expected tasks: ${(awaitedTaskIds.length > 0 ? awaitedTaskIds : primaryTaskId ? [primaryTaskId] : []).join(', ') || 'unknown'}. Agent output must include [REVIEWED] or [TESTED] verdict lines.`,
+										);
 										break;
 									}
 
