@@ -13,6 +13,10 @@ import {
 	issuePrReviewReentryAuthorization,
 	_internals as reentryInternals,
 } from '../../../src/pr-review/authorization';
+import {
+	recordPrWorkflowStartupState,
+	resetPrWorkflowStartupState,
+} from '../../../src/pr-review/enablement';
 import { resetSwarmState } from '../../../src/state';
 import { createIsolatedTestEnv } from '../../helpers/isolated-test-env.js';
 import {
@@ -50,6 +54,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	resetSwarmState();
+	resetPrWorkflowStartupState();
 	gateInternals.resetTrackedStateCache();
 	gateInternals.resolveCurrentGitHeadAsync = originalResolveCurrentGitHeadAsync;
 	gateInternals.resolvePrWorkflowRevisionDigest = originalResolveRevisionDigest;
@@ -90,6 +95,23 @@ describe('delegation gate PR-review re-entry bypass (issue #2383)', () => {
 		await expect(dispatchReviewer('call-plain')).rejects.toThrow(
 			/TASK_WORKFLOW_STAGE_A_REQUIRED/,
 		);
+	});
+
+	test('the Stage-A error points at the re-entry tool only while PR workflows are enabled', async () => {
+		const hint = 'authorize_pr_review_reentry';
+		await seedPreStageATask('1.1');
+
+		await expect(dispatchReviewer('call-hint-on')).rejects.toThrow(hint);
+
+		// pr_workflow.enabled: false denies that tool, so the hint is dropped
+		// while the error itself still fires.
+		recordPrWorkflowStartupState(tmpDir, { pr_workflow: { enabled: false } });
+		const error = await dispatchReviewer('call-hint-off').then(
+			() => null,
+			(thrown: unknown) => thrown as Error,
+		);
+		expect(error?.message).toContain('TASK_WORKFLOW_STAGE_A_REQUIRED');
+		expect(error?.message).not.toContain(hint);
 	});
 
 	test('an ordinary session with no PR_REVIEW gate is unchanged (no bypass)', async () => {

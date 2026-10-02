@@ -278,6 +278,10 @@ import {
 	wrapPostResolutionTask,
 } from './observability/startup-contract.js';
 import { loadPlan } from './plan/manager.js';
+import {
+	recordPrWorkflowStartupState,
+	resolvePrMonitorConfigForPrWorkflow,
+} from './pr-review/enablement.js';
 import { createPrmHook, resolvePrmPatternPersistenceOptions } from './prm';
 import { cleanupOldTrajectoryFiles } from './prm/trajectory-store';
 import { runRetentionSweep } from './retention/sweep';
@@ -1376,6 +1380,13 @@ async function initializeOpenCodeSwarm(
 		: Promise.resolve(null);
 	await Promise.all([configLoadP, snapshotP, gitExcludeP, projectContextP]);
 	const { config, loadedFromFile } = await configLoadP;
+	// pr_workflow.enabled is a startup-time setting: agent tool lists and the
+	// architect prompt are built from this config below and cannot change
+	// until the host restarts, so the /swarm PR commands and the PR workflow
+	// gate answer from this record instead of re-reading the file. The
+	// bootstrap root is the project root (the opened workspace is it or lies
+	// inside it), and the record covers every directory under it.
+	recordPrWorkflowStartupState(bootstrapRoot, config);
 	if (rootDecision.kind === 'redirect') {
 		// Actionable, bounded parent-root hint (AC1). `advisoryWarn` alone is
 		// buffered-only (warning-buffer), so the operator-visible leg is one
@@ -2929,7 +2940,20 @@ async function initializeOpenCodeSwarm(
 
 	// PR Monitor Worker — starts when pr_monitor.enabled and subscriptions exist.
 	// Worker creation is idempotent: first call creates, subsequent calls no-op.
-	const prMonitorConfig = PrMonitorConfigSchema.parse(config.pr_monitor ?? {});
+	// With pr_workflow.enabled: false the monitor keeps notifying but never
+	// asks for PR_FEEDBACK (the architect has no section or tools for it).
+	const prMonitorResolution = resolvePrMonitorConfigForPrWorkflow(
+		PrMonitorConfigSchema.parse(config.pr_monitor ?? {}),
+		config,
+	);
+	const prMonitorConfig = prMonitorResolution.config;
+	if (prMonitorResolution.autoFeedbackSuppressed) {
+		advisoryWarn(
+			'[opencode-swarm] pr_monitor.auto_pr_feedback is ignored because pr_workflow.enabled is false: ' +
+				'PR events are still delivered, but they will not trigger PR_FEEDBACK. ' +
+				'Set pr_workflow.enabled to true to restore automatic PR feedback.',
+		);
+	}
 
 	function ensurePrMonitorWorkerRunning(directory: string): void {
 		try {

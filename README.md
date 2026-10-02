@@ -1207,9 +1207,9 @@ Control how tool outputs are summarized for LLM context.
 | `/swarm brainstorm [topic]` | Enter BRAINSTORM mode for structured requirement discovery before a spec |
 | `/swarm council <question> [--spec-review]` | Convene a multi-model General Council for advisory deliberation |
 | `/swarm issue <issue-url\|owner/repo#N\|N> [--plan] [--trace] [--no-repro]` | Ingest a GitHub issue for localization and resolution |
-| `/swarm pr-review <pr-url\|owner/repo#N\|N> [--council] [instructions...]` | Structured deep PR review with parallel lanes, reviewer confirmation, and critic challenge |
-| `/swarm pr-feedback [<pr-url\|owner/repo#N\|N>] [instructions...]` | Ingest and close known PR feedback (review comments, CI failures, conflicts) without a fresh review |
-| `/swarm ci-monitor <pr-url\|owner/repo#N\|N>` | Drive an already-reviewed, approved PR to green and merged (monitor CI, fix, merge; max 5 fix cycles) |
+| `/swarm pr-review <pr-url\|owner/repo#N\|N> [--council] [instructions...]` | Structured deep PR review with parallel lanes, reviewer confirmation, and critic challenge (unavailable when `pr_workflow.enabled` is `false`) |
+| `/swarm pr-feedback [<pr-url\|owner/repo#N\|N>] [instructions...]` | Ingest and close known PR feedback (review comments, CI failures, conflicts) without a fresh review (unavailable when `pr_workflow.enabled` is `false`) |
+| `/swarm ci-monitor <pr-url\|owner/repo#N\|N>` | Drive an already-reviewed, approved PR to green and merged (monitor CI, fix, merge; max 5 fix cycles) (unavailable when `pr_workflow.enabled` is `false`) |
 | `/swarm ci` `[--timeout-ms <n>] [--json]` | Advisory headless CI: read-only gate/evidence evaluation with machine exit codes (also `bunx opencode-swarm ci`; see docs/ci.md) |
 | `/swarm pr subscribe <pr-url\|owner/repo#N\|N>` | Subscribe current session to PR monitoring (session-scoped); requires `pr_monitor.enabled: true` |
 | `/swarm pr unsubscribe <pr-url\|owner/repo#N\|N>` | Remove session's subscription to a PR |

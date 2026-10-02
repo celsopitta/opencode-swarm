@@ -18,6 +18,7 @@ import {
 } from '../evaluation/ephemeral-agent-dispatcher.js';
 import { parseCriticResponseFields } from '../full-auto/critic-response-parser.js';
 import { getMRPollSnapshot, getPRPollSnapshot } from '../git/pr.js';
+import { isPrWorkflowEnabled } from '../pr-review/enablement.js';
 import { detectForgeFromUrl } from '../providers/forge-provider.js';
 import {
 	canonicalRootKeyFresh,
@@ -68,11 +69,15 @@ export interface PrFeedbackLoopRuntimeOptions {
  *
  * Keep this policy in the runtime composition boundary so plugin init and the
  * settling loop cannot drift into subtly different activation semantics.
+ *
+ * The loop drives PR_FEEDBACK, so it is also off whenever the PR workflows
+ * themselves are disabled (`pr_workflow.enabled: false`).
  */
 export function isPrFeedbackLoopEnabled(
-	config: Pick<PluginConfig, 'pr_monitor' | 'pr_feedback_loop'>,
+	config: Pick<PluginConfig, 'pr_monitor' | 'pr_feedback_loop' | 'pr_workflow'>,
 ): boolean {
 	return (
+		isPrWorkflowEnabled(config) &&
 		config.pr_monitor?.enabled === true &&
 		config.pr_monitor?.auto_pr_feedback === true &&
 		config.pr_feedback_loop?.enabled === true

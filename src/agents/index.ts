@@ -15,12 +15,15 @@ import {
 	EXTERNAL_SKILL_AGENT_TOOL_MAP,
 	GENERAL_COUNCIL_AGENT_TOOL_MAP,
 	MEMORY_AGENT_TOOL_MAP,
+	PR_REVIEW_CHILD_TOOL_NAMES,
+	PR_WORKFLOW_TOOL_NAMES,
 	SKILL_AGENT_TOOL_MAP,
 	SKILL_TOOL_NAMES,
 	TURBO_AGENT_TOOL_MAP,
 } from '../config/constants';
 import { stripKnownSwarmPrefix } from '../config/schema';
 import { resolvePlanningProfile } from '../plan/planning-profile';
+import { isPrWorkflowEnabled } from '../pr-review/enablement.js';
 import {
 	addDeferredWarning,
 	advisoryWarn,
@@ -507,6 +510,7 @@ function createSwarmAgents(
 					execution_mode: pluginConfig?.execution_mode ?? 'balanced',
 				},
 			}),
+			isPrWorkflowEnabled(pluginConfig),
 		);
 		architect.name = prefixName('architect');
 
@@ -1481,6 +1485,21 @@ export function getAgentConfigs(
 						allowedTools = allowedTools.filter((t) => !allSkillTools.has(t));
 					}
 				}
+			}
+
+			// Feature-gate: PR-workflow tools — gated by pr_workflow.enabled
+			// (ON by default). With the PR workflows disabled the PR-only
+			// tools are stripped from every agent, including names that
+			// arrived through a tool_filter override, so the deny computation
+			// below makes them host-unreachable and their definitions are
+			// never sent to the model. The gate that would admit them can no
+			// longer be activated either (see activatePrWorkflow).
+			if (!isPrWorkflowEnabled(config) && allowedTools) {
+				const prWorkflowTools = new Set<string>([
+					...PR_WORKFLOW_TOOL_NAMES,
+					...PR_REVIEW_CHILD_TOOL_NAMES,
+				]);
+				allowedTools = allowedTools.filter((t) => !prWorkflowTools.has(t));
 			}
 
 			// Warn once when base name lacks a whitelist entry (no override and no AGENT_TOOL_MAP)

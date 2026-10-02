@@ -5163,6 +5163,16 @@
         }
       }
     },
+    "pr_workflow": {
+      "description": "PR workflows (the PR_REVIEW, PR_FEEDBACK and CI_MONITOR architect modes) — enabled by default. enabled: false removes the PR-only tools and mode instructions from every agent and makes /swarm pr-review, /swarm pr-feedback and /swarm ci-monitor refuse to start.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    },
     "pr_feedback_loop": {
       "description": "Autonomous PR babysitting settling loop (issue #2502) — triple opt-in with pr_monitor.enabled + pr_monitor.auto_pr_feedback; off by default; publication profile is none-only.",
       "type": "object",

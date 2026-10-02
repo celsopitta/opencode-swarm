@@ -235,6 +235,13 @@ describe('issue #2745 production init boundary', () => {
 				pr_monitor: { enabled: true, auto_pr_feedback: true },
 				pr_feedback_loop: { enabled: false },
 			},
+			// The loop drives PR_FEEDBACK, so it also stays off when the PR
+			// workflows themselves are disabled.
+			{
+				pr_monitor: { enabled: true, auto_pr_feedback: true },
+				pr_feedback_loop: { enabled: true },
+				pr_workflow: { enabled: false },
+			},
 		];
 		for (const config of offConfigs) {
 			const fixture = createSafeTestDir('pr-feedback-init-off-');

@@ -151,6 +151,7 @@ Generated from `PluginConfigSchema` (`src/config/schema.ts`) - do not edit insid
 | `quiet` | boolean | true | Suppress non-critical startup warnings (default true keeps the TUI clean). Set false to restore verbose warnings for debugging. |
 | `version_check` | boolean | true | Background staleness check against npm, throttled to once per 24h (issue #675). Set false to fully disable the network call. |
 | `full_auto` | object | { … } | Full-auto autonomous orchestration with critic oversight: permission policy, denial accounting, oversight cadence triggers (v2 preserves v1 fields so existing configs load unchanged). |
+| `pr_workflow` | object | — | PR workflows (the PR_REVIEW, PR_FEEDBACK and CI_MONITOR architect modes) — enabled by default. enabled: false removes the PR-only tools and mode instructions from every agent and makes /swarm pr-review, /swarm pr-feedback and /swarm ci-monitor refuse to start. |
 | `pr_feedback_loop` | object | — | Autonomous PR babysitting settling loop (issue #2502) — triple opt-in with pr_monitor.enabled + pr_monitor.auto_pr_feedback; off by default; publication profile is none-only. |
 | `pr_monitor` | object (strict) | — | GitHub PR subscription and polling (FR-001) — disabled by default; opt-in for real-time PR status updates. |
 | `external_skills` | object | — | External skills: candidate model, discovery, and quarantine store (FR-001) — all subsystems opt-in. |
@@ -730,6 +731,97 @@ Disabled by default. When enabled, the `docs_design` agent writes
 `<out_dir>/reference/traceability.json`, and `<out_dir>/design-changelog.md` into the
 target repo; the drift check writes `.swarm/doc-drift-phase-N.json`. See
 [Commands → `/swarm design-docs`](commands.md).
+
+### PR workflows (`pr_workflow`)
+
+Master switch for the architect's PR workflows: `MODE: PR_REVIEW`
+(`/swarm pr-review`), `MODE: PR_FEEDBACK` (`/swarm pr-feedback`) and
+`MODE: CI_MONITOR` (`/swarm ci-monitor`).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `true` | When `false`, the PR workflows are unavailable and their PR-only tools and mode instructions are not sent to any agent |
+
+Enabled by default. A deployment that never runs these workflows can turn them
+off so the architect does not carry their tool definitions and mode
+instructions on every request:
+
+```json
+{ "pr_workflow": { "enabled": false } }
+```
+
+**The setting is read once, when OpenCode starts.** Tool lists and the
+architect prompt are built at startup, and the commands and the workflow gate
+answer from that same startup value, so editing the file has no effect until
+OpenCode is restarted.
+
+With `enabled: false`:
+
+- The PR-only tools (`abort_pr_workflow`, `authorize_pr_review_reentry`,
+  `complete_pr_workflow`, `invalidate_pr_feedback_publication`,
+  `pr_workflow_status`, `prepare_pr_feedback_scope`,
+  `rebind_pr_feedback_head`, `run_pr_feedback_stage_a`,
+  `write_pr_review_artifact`, `write_pr_review_trigger_eval`, and the
+  lane-overlay tool `submit_pr_review_result`) are removed from every agent's
+  allow-list and host-denied, even when a `tool_filter` override names them.
+- The `MODE: PR_REVIEW`, `MODE: PR_FEEDBACK` and `MODE: CI_MONITOR` sections
+  and the PR-only tools are left out of the architect prompt.
+- `/swarm pr-review`, `/swarm pr-feedback` and `/swarm ci-monitor` fail with an
+  explanation instead of starting a workflow.
+- No PR workflow gate can be activated by any other path either: a
+  `swarm-pr-review:` or `swarm-pr-feedback:verification` lane dispatch that
+  would start one is refused, and the autonomous feedback loop does not start.
+- `pr_monitor.auto_pr_feedback` is ignored, with a startup advisory. PR
+  notifications are still delivered.
+
+What is deliberately left in place:
+
+- `prepare_pr_workflow_checkout` stays available. Its `restore` operation
+  gives back the working tree it stashed after a workflow has ended, and
+  `/swarm abort-pr-workflow` points at it.
+- General tools a PR workflow shares with other modes (`dispatch_lanes_async`,
+  `collect_lane_results`, `parse_lane_candidates`, `gh_evidence`, …). The
+  `dispatch_lanes_async` schema therefore still describes its PR-review
+  parameters.
+- `/swarm abort-pr-workflow`, `/swarm pr-feedback-loop stop` and the
+  `pr subscribe` / `unsubscribe` / `status` commands.
+
+Finish or abort any PR workflow **before** turning the setting off. A workflow
+that is still active afterwards keeps blocking edits in its session, and its
+own messages still name tools that are now denied:
+
+- `/swarm abort-pr-workflow` clears it, subject to that command's own rules
+  (lanes still in flight must settle first, and an armed publication needs
+  `PR_FEEDBACK --cancel-publication <reason>`), and
+  `prepare_pr_workflow_checkout` with `operation: "restore"` gives back the
+  stashed working tree.
+- The exception is a `PR_FEEDBACK` workflow that has already published: it can
+  only be closed with `complete_pr_workflow`, so re-enable the setting and
+  restart to finish it.
+
+Other caveats:
+
+- With `tool_filter.enabled: false` the plugin emits no per-tool denies at
+  all, so the PR-only tools stay visible to the model. Of those, only
+  `pr_workflow_status` (a read-only status report) still does anything; the
+  rest need a workflow that can no longer be started.
+- With `pr_monitor.enabled: true`, the wake message for PR events still tells
+  the architect to address simple fixes "via the swarm-pr-feedback
+  discipline". Run PR monitoring together with `pr_workflow.enabled: false`
+  only if notification without the feedback workflow is what you want.
+- A custom architect prompt must use `### MODE: PR_REVIEW`,
+  `### MODE: PR_FEEDBACK` and `### MODE: CI_MONITOR` headers for the sections
+  to be removed. A section runs to the next `### MODE:` or `## ` heading, or
+  to the end of the custom prompt. A PR mode section under any other heading
+  level is left in place and reported in a startup advisory.
+- The standalone CLI (`bunx opencode-swarm run …`) never starts the plugin, so
+  the setting does not apply to it.
+- The startup value is remembered per started project root, for up to 64
+  roots. Swarm worktree lanes are not counted: a lane is not recorded, and a
+  lane inside its project reads the project's value. If a process ever exceeds
+  the bound, the plugin forgets in the safe direction only: a project may then
+  have its PR commands refused until a restart, but a disabled project is never
+  switched back on.
 
 ### Git (`git`)
 

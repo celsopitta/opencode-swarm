@@ -45,6 +45,10 @@ export async function bootKnowledgeHost(
 				// Real-host fixtures must not depend on or mutate a developer's
 				// cross-project hive. Tests that need hive behavior configure it directly.
 				knowledge: { enabled: true, hive_enabled: false },
+				// Pinned for the same reason: a developer's own user-level config
+				// may turn the PR workflows off, and plugin boot records the merged
+				// value for this root.
+				pr_workflow: { enabled: true },
 				...configOverrides,
 			},
 			null,
