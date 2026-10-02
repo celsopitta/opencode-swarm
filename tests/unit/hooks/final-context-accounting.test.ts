@@ -332,6 +332,51 @@ describe('final context accounting (#2107 §3)', () => {
 		expect(snapshot?.usedTokens).toBe(40_010);
 	});
 
+	test('provider-anchored: without a ledger the tail is used unreduced', async () => {
+		// Native agent / no identity / the compaction-pending turn: nothing began
+		// a ledger, nothing was recorded, nothing is subtracted.
+		const step = createFinalContextAccountingStep({ config: makeConfig() });
+		const messages: MessageWithParts[] = [
+			{
+				info: {
+					role: 'assistant',
+					sessionID: SESSION,
+					tokens: { input: 40_000, output: 10, cache: { read: 0, write: 0 } },
+				},
+				parts: [{ type: 'text', text: 'done' }],
+			} as unknown as MessageWithParts,
+			messageOf('user', TEXT_10K_TOKENS),
+		];
+		await step({}, { messages });
+		const snapshot = getFinalPromptPressure(SESSION);
+		expect(snapshot?.providerReported).toBe(true);
+		// anchor (40,010) + the full ~9,900-token tail.
+		expect(snapshot?.usedTokens).toBe(40_010 + Math.ceil(30_000 * 0.33));
+	});
+
+	test('provider-anchored: system and messages emissions together — system ignored, messages subtracted', async () => {
+		beginTurnLedger(SESSION, 4000, true);
+		recordProducerEmission(SESSION, 'system-enhancer', 3000, 0, 'system');
+		recordProducerEmission(SESSION, 'knowledge-injector', 2000, 0, 'messages');
+
+		const step = createFinalContextAccountingStep({ config: makeConfig() });
+		const messages: MessageWithParts[] = [
+			{
+				info: {
+					role: 'assistant',
+					sessionID: SESSION,
+					tokens: { input: 40_000, output: 10, cache: { read: 0, write: 0 } },
+				},
+				parts: [{ type: 'text', text: 'done' }],
+			} as unknown as MessageWithParts,
+			messageOf('user', TEXT_10K_TOKENS),
+		];
+		await step({}, { messages });
+		const snapshot = getFinalPromptPressure(SESSION);
+		// anchor (40,010) + (9,900 − 2,000); the 3,000 system tokens never enter.
+		expect(snapshot?.usedTokens).toBe(40_010 + Math.ceil(30_000 * 0.33) - 2000);
+	});
+
 	test('pure estimate: messages-surface emissions are not subtracted (their bytes are measured)', async () => {
 		beginTurnLedger(SESSION, 4000, true);
 		recordProducerEmission(SESSION, 'knowledge-injector', 5000, 0, 'messages');

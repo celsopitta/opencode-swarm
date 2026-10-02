@@ -35,7 +35,10 @@
  * recorded, so nothing is subtracted and the tail is used unreduced.
  * The previous request's injections stand in for this request's; they are
  * rebuilt from the same inputs each turn, so the two differ only by what the
- * turn itself changed.
+ * turn itself changed. The error is signed: an injection that first appears
+ * in a request (a phase's first knowledge directive, a new advisory batch) is
+ * under-counted by its size for that one request, bounded by the producers'
+ * caps, and is inside the next completed call's host count.
  *
  * The limit is resolved through the exact same ladder physical pruning uses
  * (`resolveModelLimit` with `context_budget.model_limits` overrides and the

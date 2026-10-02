@@ -52,7 +52,13 @@ host's own count reaches them.
 
 - The previous request's injections stand in for this request's. They are
   rebuilt from the same inputs each turn, so the two differ only by what the
-  turn itself changed (a new knowledge directive, a drained advisory).
+  turn itself changed (a new knowledge directive, a drained advisory). That
+  difference is signed: an injection that first appears in a request is
+  under-counted by its size for that one request, bounded by the producers'
+  caps (knowledge `max_injection_tokens`, the advisory block limit, the memory
+  recall budget, the system-enhancer budget — about 11K tokens in total with
+  default settings), and it is inside the next completed call's host count.
+  A drained injection over-counts the same way for one request.
 - The subtraction needs a ledger. When none exists at accounting time (a
   native agent, a session without identity, the architect's compaction-pending
   turn), messages-surface emissions are dropped on record, nothing is
@@ -64,5 +70,6 @@ host's own count reaches them.
   sources: the advisories' own tokens, the context-budget hook's warning and
   the pipeline tracker's phase reminder (neither is ledger-recorded), and the
   gap between a producer's recorded estimate and its fenced carrier text. All
-  of them err towards reporting more, never less.
+  of them err towards reporting more; the one-request under-count above is the
+  only source in the other direction.
 - The debug log line now reports both `systemSurface=` and `messagesSurface=`.
