@@ -31,9 +31,10 @@ on a line of its own starting at the first character, as plain text, with
 nothing else on the line, and separate from the `VERDICT:` line. The row format
 and the rest of the output format are unchanged.
 
-**Architect delegation examples (`src/agents/architect.ts`).** The four
-reviewer / test_engineer `OUTPUT:` example lines now also ask for the verdict
-row on its own line.
+**Architect delegation examples (`src/agents/architect.ts`).** The two
+test_engineer `OUTPUT:` example lines now also ask for the `[TESTED]` row. The
+reviewer examples are unchanged; the architect prompt has a character budget
+and the reviewer prompt states the row rule itself.
 
 **Gate-attribution skill (`.opencode/skills/gate-attribution/SKILL.md`).** The
 skill told the architect things the gate does not do: that with no parseable
