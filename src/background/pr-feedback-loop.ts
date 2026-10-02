@@ -1749,7 +1749,7 @@ async function claimAndProcessPrFeedbackEventUnlocked(
 			authorization: {
 				authorized: false,
 				reason:
-					'disabled: pr_feedback_loop requires pr_monitor.enabled + pr_monitor.auto_pr_feedback + pr_feedback_loop.enabled (triple opt-in)',
+					'disabled: pr_feedback_loop requires pr_monitor.enabled + pr_monitor.auto_pr_feedback + pr_feedback_loop.enabled (triple opt-in), and pr_workflow.enabled must not be false',
 				stale: false,
 				foreign: false,
 				replay: false,

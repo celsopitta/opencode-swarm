@@ -370,6 +370,40 @@ export const SKILL_AGENT_TOOL_MAP: Partial<Record<AgentName, ToolName[]>> = {
 };
 
 // ---------------------------------------------------------------------------
+// PR-workflow tools — on by default, removed when pr_workflow.enabled is false
+// ---------------------------------------------------------------------------
+
+/**
+ * Tools that are used ONLY inside the PR workflows (PR_REVIEW / PR_FEEDBACK /
+ * CI_MONITOR): nothing outside those workflows calls them, so with the
+ * workflows disabled they are dead weight in every architect request. They
+ * stay in the default AGENT_TOOL_MAP (via each tool's `agents` metadata);
+ * `pr_workflow.enabled: false` strips them from every agent's allow-list,
+ * which the host turns into permission denies.
+ *
+ * Deliberately NOT listed:
+ *  - `prepare_pr_workflow_checkout`: its `restore` operation runs AFTER a
+ *    workflow has ended (and `/swarm abort-pr-workflow` points the user at
+ *    it) to give back the working tree it stashed. Denying it would strand
+ *    that stash for a workflow that was active when the flag was switched.
+ *  - general-purpose tools a PR workflow also uses (`dispatch_lanes_async`,
+ *    `collect_lane_results`, `gh_evidence`, `parse_lane_candidates`, …):
+ *    other modes depend on them.
+ */
+export const PR_WORKFLOW_TOOL_NAMES = [
+	'abort_pr_workflow',
+	'authorize_pr_review_reentry',
+	'complete_pr_workflow',
+	'invalidate_pr_feedback_publication',
+	'pr_workflow_status',
+	'prepare_pr_feedback_scope',
+	'rebind_pr_feedback_head',
+	'run_pr_feedback_stage_a',
+	'write_pr_review_artifact',
+	'write_pr_review_trigger_eval',
+] as const satisfies readonly ToolName[];
+
+// ---------------------------------------------------------------------------
 // PR-review child settlement — runtime overlay for bound discovery lanes only
 // ---------------------------------------------------------------------------
 

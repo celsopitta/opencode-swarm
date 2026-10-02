@@ -2003,6 +2003,11 @@ function validateConfigKey(path: string, value: unknown): ConfigFinding[] {
 			break;
 		}
 
+		case 'pr_workflow': {
+			emitObjectTypeMismatch('pr_workflow', value, findings);
+			break;
+		}
+
 		case 'pr_feedback_loop': {
 			emitObjectTypeMismatch('pr_feedback_loop', value, findings);
 			break;

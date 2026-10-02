@@ -13,6 +13,10 @@ import {
 	transitionPrReviewToFeedback,
 } from '../hooks/pr-workflow-gate.js';
 import {
+	isPrWorkflowEnabledForDirectory,
+	PR_WORKFLOW_DISABLED_MESSAGE,
+} from '../pr-review/enablement.js';
+import {
 	detectForgeFromUrl,
 	type ForgeContext,
 	resolveForgeContextFromPluginConfig,
@@ -381,6 +385,23 @@ export function isCommandFailure(
 		value !== null &&
 		(value as CommandFailure).ok === false
 	);
+}
+
+/**
+ * Runs a PR-workflow command (`pr-review`, `pr-feedback`, `ci-monitor`) only
+ * when `pr_workflow.enabled` is not false. Disabled, the command fails fast
+ * with an explanation instead of emitting a MODE signal: the architect has no
+ * section for that mode and its PR-only tools are host-denied, so the signal
+ * would start a workflow that cannot run.
+ */
+async function runPrWorkflowCommand(
+	ctx: CommandContext,
+	run: () => CommandResult,
+): CommandResult {
+	if (!isPrWorkflowEnabledForDirectory(ctx.directory)) {
+		return { ok: false, text: `Error: ${PR_WORKFLOW_DISABLED_MESSAGE}` };
+	}
+	return run();
 }
 
 async function handleModeCommandWithBundledSkills(
@@ -1590,26 +1611,31 @@ export const COMMAND_REGISTRY = {
 	},
 	'pr-review': {
 		handler: (ctx) =>
-			handleModeCommandWithBundledSkills(
-				ctx,
-				handlePrReviewCommand,
-				'PR_REVIEW',
+			runPrWorkflowCommand(ctx, () =>
+				handleModeCommandWithBundledSkills(
+					ctx,
+					handlePrReviewCommand,
+					'PR_REVIEW',
+				),
 			),
 		description:
 			'Launch deep PR review with multi-lane analysis [url] [--council]',
 		args: '<pr-url|owner/repo#N|N> [--council]',
 		details:
-			'Launches a structured PR review: preserves dirty state, verifies and binds an exact detached PR head, reconstructs PR intent via obligation extraction cascade, computes a depth tier (S/M/L) from the bound merge-base diff, launches the base explorer wave through dispatch_lanes_async (all 6 review dimensions covered on every PR — six singleton lanes at tier L, consolidated owned_workflow_lanes partitions at tiers S/M) while the architect keeps doing non-dependent work, and polls collect_lane_results incrementally. It evaluates an exact 11-row repository-agnostic risk-family ledger, records applicable rows as MATCHED and concretely inapplicable rows as provenance-free NOT_TRIGGERED, always keeps unclassified-risk MATCHED, and dispatches micro work only for MATCHED families (dedicated lanes at tier L, consolidated sweeps at S/M). It then validates findings through independent reviewer confirmation, applies critic challenge to HIGH/CRITICAL findings, and synthesizes only after matched coverage is closed. Failed obligations retry through the same structured async mode and exact PR head; blocking or direct-Task dispatch is not provenance-equivalent, so unclosed matched coverage leaves the review BLOCKED rather than degraded. --council variant fires adversarial multi-model review. Supports full GitHub URL, owner/repo#N shorthand, or bare PR number (resolves against origin remote).',
+			'Launches a structured PR review: preserves dirty state, verifies and binds an exact detached PR head, reconstructs PR intent via obligation extraction cascade, computes a depth tier (S/M/L) from the bound merge-base diff, launches the base explorer wave through dispatch_lanes_async (all 6 review dimensions covered on every PR — six singleton lanes at tier L, consolidated owned_workflow_lanes partitions at tiers S/M) while the architect keeps doing non-dependent work, and polls collect_lane_results incrementally. It evaluates an exact 11-row repository-agnostic risk-family ledger, records applicable rows as MATCHED and concretely inapplicable rows as provenance-free NOT_TRIGGERED, always keeps unclassified-risk MATCHED, and dispatches micro work only for MATCHED families (dedicated lanes at tier L, consolidated sweeps at S/M). It then validates findings through independent reviewer confirmation, applies critic challenge to HIGH/CRITICAL findings, and synthesizes only after matched coverage is closed. Failed obligations retry through the same structured async mode and exact PR head; blocking or direct-Task dispatch is not provenance-equivalent, so unclosed matched coverage leaves the review BLOCKED rather than degraded. --council variant fires adversarial multi-model review. Supports full GitHub URL, owner/repo#N shorthand, or bare PR number (resolves against origin remote). Requires pr_workflow.enabled (on by default).',
 		category: 'agent',
 		toolPolicy: 'none',
 	},
 	'pr-feedback': {
-		handler: (ctx) => handlePrFeedbackCommandWithTransition(ctx),
+		handler: (ctx) =>
+			runPrWorkflowCommand(ctx, () =>
+				handlePrFeedbackCommandWithTransition(ctx),
+			),
 		description:
 			'Ingest and close known PR feedback (review comments, CI failures, conflicts) [pr] [instructions]',
 		args: '[url|owner/repo#N|N] [instructions...]',
 		details:
-			'Triggers MODE: PR_FEEDBACK — ingests existing pull-request feedback (review threads, requested changes, CI/check failures, merge conflicts, stale branch state, pasted notes), verifies every claim against source, clusters related problems, fixes confirmed items, validates the branch, and reports closure status for every ledger item. Distinct from /swarm pr-review, which discovers new findings. The PR reference is optional: with none, the architect builds the ledger from the current PR/branch; text after the reference is forwarded as extra instructions. Supports full GitHub URL, owner/repo#N shorthand, or bare PR number (resolved against origin).',
+			'Triggers MODE: PR_FEEDBACK — ingests existing pull-request feedback (review threads, requested changes, CI/check failures, merge conflicts, stale branch state, pasted notes), verifies every claim against source, clusters related problems, fixes confirmed items, validates the branch, and reports closure status for every ledger item. Distinct from /swarm pr-review, which discovers new findings. The PR reference is optional: with none, the architect builds the ledger from the current PR/branch; text after the reference is forwarded as extra instructions. Supports full GitHub URL, owner/repo#N shorthand, or bare PR number (resolved against origin). Requires pr_workflow.enabled (on by default).',
 		category: 'agent',
 		toolPolicy: 'none',
 	},
@@ -1625,12 +1651,14 @@ export const COMMAND_REGISTRY = {
 	},
 	'ci-monitor': {
 		handler: (ctx) =>
-			handleModeCommandWithBundledSkills(ctx, handleCiMonitorCommand),
+			runPrWorkflowCommand(ctx, () =>
+				handleModeCommandWithBundledSkills(ctx, handleCiMonitorCommand),
+			),
 		description:
 			'Drive an already-reviewed, approved PR to green and merged (monitor CI, fix, merge) [pr]',
 		args: '<pr-url|owner/repo#N|N>',
 		details:
-			'Triggers MODE: CI_MONITOR — takes an already human-reviewed, approved PR, exhaustively researches every CI failure, fixes it end-to-end, iterates until all required checks are green (max 5 fix cycles), then merges via `gh pr merge` with no merge-strategy flag. Invoke only after human review is complete; the skill re-verifies reviewDecision: APPROVED and mergeable state before doing anything destructive. Distinct from /swarm pr-subscribe, which passively watches a PR without a merge terminal. Supports full GitHub URL, owner/repo#N shorthand, or bare PR number (resolved against origin).',
+			'Triggers MODE: CI_MONITOR — takes an already human-reviewed, approved PR, exhaustively researches every CI failure, fixes it end-to-end, iterates until all required checks are green (max 5 fix cycles), then merges via `gh pr merge` with no merge-strategy flag. Invoke only after human review is complete; the skill re-verifies reviewDecision: APPROVED and mergeable state before doing anything destructive. Distinct from /swarm pr-subscribe, which passively watches a PR without a merge terminal. Supports full GitHub URL, owner/repo#N shorthand, or bare PR number (resolved against origin). Requires pr_workflow.enabled (on by default).',
 		category: 'agent',
 		toolPolicy: 'none',
 	},

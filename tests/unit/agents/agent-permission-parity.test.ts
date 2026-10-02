@@ -49,6 +49,25 @@ describe('full-auto policy parity (anti-drift)', () => {
 			},
 			'FR-004 override bypass (reviewer naming a skill tool)',
 		],
+		[{ pr_workflow: { enabled: false } }, 'pr workflows off'],
+		[
+			{
+				pr_workflow: { enabled: false },
+				tool_filter: {
+					overrides: { reviewer: ['complete_pr_workflow', 'diff'] },
+				},
+			},
+			'pr workflows off, override naming a PR-only tool',
+		],
+		[
+			{
+				pr_workflow: { enabled: false },
+				tool_filter: {
+					overrides: { reviewer: ['submit_pr_review_result', 'diff'] },
+				},
+			},
+			'pr workflows off, override naming the PR-review lane tool',
+		],
 	])('emitted allow-list == resolveAgentCapabilityTools (%s)', (raw, label) => {
 		const config = PluginConfigSchema.parse(raw as Record<string, unknown>);
 		const agents = getAgentConfigs(config);

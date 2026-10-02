@@ -16,6 +16,7 @@ import {
 	EXTERNAL_SKILL_AGENT_TOOL_MAP,
 	GENERAL_COUNCIL_AGENT_TOOL_MAP,
 	MEMORY_AGENT_TOOL_MAP,
+	PR_WORKFLOW_TOOL_NAMES,
 	SKILL_AGENT_TOOL_MAP,
 	TOOL_DESCRIPTIONS,
 	TURBO_AGENT_TOOL_MAP,
@@ -1618,6 +1619,43 @@ The architect resolves any \`unresolvedConflicts\` in \`unifiedFeedbackMd\` BEFO
 sending it to the coder — the coder never sees contradictory instructions.`;
 }
 
+/** Architect prompt mode sections that belong to the PR workflows. */
+export const PR_WORKFLOW_MODE_SECTIONS = [
+	'PR_REVIEW',
+	'PR_FEEDBACK',
+	'CI_MONITOR',
+] as const;
+
+/**
+ * Removes one `### MODE: <mode>` section from a prompt: its header line and
+ * everything up to the next `### MODE:` header, the next `## ` header, or the
+ * end of the prompt — so it removes exactly its own section wherever that
+ * section sits, including last. Headers are matched at the start of a line
+ * only (a `#### MODE:` sub-heading is not a section header) and either line
+ * ending is accepted.
+ */
+function stripModeSection(prompt: string, mode: string): string {
+	return prompt.replace(
+		new RegExp(
+			`^### MODE: ${mode}\\b[^\\n]*\\n[\\s\\S]*?(?=^### MODE: |^## |(?![\\s\\S]))`,
+			'm',
+		),
+		'',
+	);
+}
+
+/**
+ * The architect's default tool grant, minus the PR-workflow tools when
+ * `pr_workflow.enabled` is false — mirroring the allow-list strip in
+ * agents/index.ts so the prompt never names a tool the host denies.
+ */
+function architectBaseTools(prWorkflowEnabled: boolean) {
+	const tools = AGENT_TOOL_MAP.architect ?? [];
+	if (prWorkflowEnabled) return tools;
+	const prWorkflowTools = new Set<string>(PR_WORKFLOW_TOOL_NAMES);
+	return tools.filter((tool) => !prWorkflowTools.has(tool));
+}
+
 /**
  * Generate the YOUR TOOLS line from AGENT_TOOL_MAP.architect plus enabled opt-in tool maps.
  * Format: "Task (delegation), tool1, tool2, ..." — Task is always first.
@@ -1634,11 +1672,12 @@ function buildYourToolsList(
 	externalSkillsEnabled = false,
 	turboEnabled = false,
 	skillsEnabled = false,
+	prWorkflowEnabled = true,
 ): string {
 	const qaCouncilEnabled = council?.enabled === true;
 	const generalCouncilEnabled = council?.general?.enabled === true;
 	const tools = [
-		...(AGENT_TOOL_MAP.architect ?? []),
+		...architectBaseTools(prWorkflowEnabled),
 		...(memoryEnabled ? (MEMORY_AGENT_TOOL_MAP.architect ?? []) : []),
 		...(externalSkillsEnabled
 			? (EXTERNAL_SKILL_AGENT_TOOL_MAP.architect ?? [])
@@ -1793,11 +1832,12 @@ function buildAvailableToolsList(
 	externalSkillsEnabled = false,
 	turboEnabled = false,
 	skillsEnabled = false,
+	prWorkflowEnabled = true,
 ): string {
 	const qaCouncilEnabled = council?.enabled === true;
 	const generalCouncilEnabled = council?.general?.enabled === true;
 	const tools = [
-		...(AGENT_TOOL_MAP.architect ?? []),
+		...architectBaseTools(prWorkflowEnabled),
 		...(memoryEnabled ? (MEMORY_AGENT_TOOL_MAP.architect ?? []) : []),
 		...(externalSkillsEnabled
 			? (EXTERNAL_SKILL_AGENT_TOOL_MAP.architect ?? [])
@@ -2013,10 +2053,40 @@ export function createArchitectAgent(
 		directory: '',
 		config: { execution_mode: 'strict' },
 	}),
+	prWorkflowEnabled = true,
 ): AgentDefinition {
 	let prompt = ARCHITECT_PROMPT;
 
 	prompt = resolvePrompt(prompt, customPrompt, customAppendPrompt);
+
+	// Leave the PR-workflow modes out when pr_workflow.enabled is false. Their
+	// tools are host-denied and their gate cannot be activated in that
+	// configuration (agents/index.ts, activatePrWorkflow), so the sections
+	// would describe a workflow the architect cannot run. SIGNAL-TRIGGERED
+	// MODE detection already requires a matching "### MODE: X" section, so a
+	// stray signal for a stripped mode is ignored. This runs on the resolved
+	// prompt BEFORE anything is appended to it below: a PR section that is the
+	// last thing in a custom prompt is removed to the end of that prompt, and
+	// the directives appended afterwards must not be swallowed with it.
+	if (!prWorkflowEnabled) {
+		for (const mode of PR_WORKFLOW_MODE_SECTIONS) {
+			prompt = stripModeSection(prompt, mode);
+		}
+		// A custom prompt can spell a PR mode header in a way the strip does
+		// not recognise (another heading level, for instance). Say so instead
+		// of silently shipping instructions for a workflow that cannot run.
+		if (
+			new RegExp(
+				`^#+[ \\t]*MODE: (?:${PR_WORKFLOW_MODE_SECTIONS.join('|')})\\b`,
+				'm',
+			).test(prompt)
+		) {
+			advisoryWarn(
+				'[swarm] WARNING: pr_workflow.enabled is false but the custom architect prompt still contains a PR workflow mode section the plugin could not remove. ' +
+					'Use "### MODE: PR_REVIEW", "### MODE: PR_FEEDBACK" and "### MODE: CI_MONITOR" headers, or delete those sections from the custom prompt.',
+			);
+		}
+	}
 
 	const planningProfileDirective = renderPlanningProfileDirective(
 		planningProfileResolution,
@@ -2047,6 +2117,7 @@ export function createArchitectAgent(
 				externalSkillsEnabled,
 				turboEnabled,
 				skillsEnabled,
+				prWorkflowEnabled,
 			),
 		)
 		?.replace(
@@ -2057,6 +2128,7 @@ export function createArchitectAgent(
 				externalSkillsEnabled,
 				turboEnabled,
 				skillsEnabled,
+				prWorkflowEnabled,
 			),
 		)
 		?.replace('{{SLASH_COMMANDS}}', buildSlashCommandsList());

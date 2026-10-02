@@ -72,6 +72,7 @@ import {
 	isProvablyDisjoint,
 } from '../plan/parallel-verdict';
 import { derivePlanId } from '../plan/utils.js';
+import { isPrWorkflowEnabledForDirectory } from '../pr-review/enablement.js';
 import { resetPrmSessionState } from '../prm/index.js';
 import {
 	buildReviewRoutePending,
@@ -4933,7 +4934,11 @@ export function createDelegationGateHook(
 						`TASK_WORKFLOW_STAGE_A_REQUIRED: cannot dispatch ${targetAgent} for task ${taskId} from ${workflow.state}. ` +
 							`Stage B (${targetAgent}) requires the task to be at pre_check_passed (or later) — a state written only by the stage_a_passed transition, which is emitted when pre_check_batch completes with the task correctly attributed. ` +
 							stageARemediation +
-							(targetAgent === 'reviewer' || targetAgent === 'test_engineer'
+							// The re-entry hint names a PR-workflow tool, which is
+							// host-denied when pr_workflow.enabled is false.
+							((targetAgent === 'reviewer' ||
+								targetAgent === 'test_engineer') &&
+							isPrWorkflowEnabledForDirectory(directory)
 								? ` For PR-review re-entry outside the task workflow, issue a one-use authorization with authorize_pr_review_reentry immediately before the Task dispatch.`
 								: ''),
 					);

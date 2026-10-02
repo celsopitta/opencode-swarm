@@ -137,6 +137,15 @@ describe('issue #2502 pr-feedback-loop settle pipeline', () => {
 		expect(result.reason).toMatch(/disabled/);
 		expect(result.authorization?.authorized).toBe(false);
 		expect(result.authorization?.reason).toMatch(/disabled/);
+		// The reason names every gate that can keep the loop off.
+		for (const gate of [
+			'pr_monitor.enabled',
+			'pr_monitor.auto_pr_feedback',
+			'pr_feedback_loop.enabled',
+			'pr_workflow.enabled',
+		]) {
+			expect(result.authorization?.reason).toContain(gate);
+		}
 		expect(performer).not.toHaveBeenCalled();
 		expect(fs.existsSync(path.join(dir, PR_FEEDBACK_LOOP_STATE_REL))).toBe(
 			false,

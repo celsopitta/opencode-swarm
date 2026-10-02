@@ -2954,6 +2954,17 @@ export const PrMonitorConfigSchema = z
 
 export type PrMonitorConfig = z.infer<typeof PrMonitorConfigSchema>;
 
+// PR workflows — the architect's PR_REVIEW, PR_FEEDBACK and CI_MONITOR modes.
+// ON by default (existing behaviour). When `enabled` is false the PR-only
+// tools are host-denied for every agent, the three mode sections are left out
+// of the architect prompt, `/swarm pr-review`, `/swarm pr-feedback` and
+// `/swarm ci-monitor` refuse to start, and no PR workflow gate can be
+// activated — so a deployment that never runs PR workflows does not pay for
+// their tool definitions and instructions on every architect request.
+export const PrWorkflowConfigSchema = z.object({
+	enabled: z.boolean().default(true),
+});
+
 /**
  * Settling loop for autonomous PR babysitting (issue #2502; #1678 capstone) —
  * TRIPLE opt-in: runs only when pr_monitor.enabled AND
@@ -4447,6 +4458,11 @@ export const PluginConfigSchema = z.object({
 		.describe(
 			'Full-auto autonomous orchestration with critic oversight: permission policy, denial accounting, oversight cadence triggers (v2 preserves v1 fields so existing configs load unchanged).',
 		),
+
+	// PR workflows (PR_REVIEW / PR_FEEDBACK / CI_MONITOR) — enabled by default.
+	pr_workflow: PrWorkflowConfigSchema.optional().describe(
+		'PR workflows (the PR_REVIEW, PR_FEEDBACK and CI_MONITOR architect modes) — enabled by default. enabled: false removes the PR-only tools and mode instructions from every agent and makes /swarm pr-review, /swarm pr-feedback and /swarm ci-monitor refuse to start.',
+	),
 
 	// PR Monitor — GitHub PR subscription and polling (FR-001)
 	// Disabled by default; opt-in for real-time PR status updates.

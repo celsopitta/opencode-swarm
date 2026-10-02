@@ -26,6 +26,8 @@ import {
 	EXTERNAL_SKILL_AGENT_TOOL_MAP,
 	GENERAL_COUNCIL_AGENT_TOOL_MAP,
 	MEMORY_AGENT_TOOL_MAP,
+	PR_REVIEW_CHILD_TOOL_NAMES,
+	PR_WORKFLOW_TOOL_NAMES,
 	SKILL_AGENT_TOOL_MAP,
 	SKILL_TOOL_NAMES,
 	TURBO_AGENT_TOOL_MAP,
@@ -104,6 +106,7 @@ export interface FullAutoClassifierInput {
 		council?: { enabled?: boolean; general?: { enabled?: boolean } };
 		turbo?: unknown;
 		skills?: { enabled?: boolean };
+		pr_workflow?: { enabled?: boolean };
 		tool_filter?: { overrides?: Record<string, string[]> };
 	};
 }
@@ -615,6 +618,15 @@ function resolveAgentCapabilityTools(
 	if (pluginConfig?.skills?.enabled !== true && roleName !== 'skill_improver') {
 		const allSkillTools = new Set<string>(SKILL_TOOL_NAMES);
 		tools = tools.filter((tool) => !allSkillTools.has(tool));
+	}
+	// pr_workflow.enabled: false — mirror of the getAgentConfigs strip: the
+	// PR-only tools are denied for every role, override or not.
+	if (pluginConfig?.pr_workflow?.enabled === false) {
+		const prWorkflowTools = new Set<string>([
+			...PR_WORKFLOW_TOOL_NAMES,
+			...PR_REVIEW_CHILD_TOOL_NAMES,
+		]);
+		tools = tools.filter((tool) => !prWorkflowTools.has(tool));
 	}
 	return tools;
 }

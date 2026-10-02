@@ -143,6 +143,10 @@ import {
 	summarizePrReviewBaseDimensionAttempts,
 } from '../pr-review/completion.js';
 import {
+	isPrWorkflowEnabledForDirectory,
+	PR_WORKFLOW_DISABLED_MESSAGE,
+} from '../pr-review/enablement.js';
+import {
 	assessTerminalReadiness,
 	type CriticOutcome,
 	deriveFeedbackHandoffFindingIds,
@@ -1762,6 +1766,15 @@ export async function activatePrWorkflow(
 	} = {},
 ): Promise<PrWorkflowGateState> {
 	const normalizedSessionID = normalizeSessionID(sessionID);
+	// pr_workflow.enabled: false (as recorded at plugin startup) — every path
+	// that STARTS a PR workflow (the /swarm commands, a `swarm-pr-review:` /
+	// `swarm-pr-feedback:verification` lane dispatch, the autonomous feedback
+	// loop) arrives here. With the workflows disabled the PR-only tools are
+	// host-denied, so a gate activated now could never be completed; refuse
+	// before any state is written.
+	if (!isPrWorkflowEnabledForDirectory(directory)) {
+		throw new Error(`BLOCKED: ${PR_WORKFLOW_DISABLED_MESSAGE}`);
+	}
 	const initiallyActive = await readPrWorkflowGateState(
 		directory,
 		normalizedSessionID,
