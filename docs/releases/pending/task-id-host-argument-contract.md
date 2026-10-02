@@ -6,10 +6,11 @@
   tool's `task_id` argument. Task attribution stays on the standalone `TASK:` line
   (for example `TASK: 1.1`), and the prompt now says to leave `task_id` unset,
   because the host reads it as a sub-agent session handle for resuming.
-- The plugin enforces that contract at the host boundary. At the end of the Task
-  `tool.execute.before` chain, after every plugin-side reader of the plan id has
-  run, a `task_id` that is not a session handle (`ses…`) is removed from the
-  arguments the host executes. The plan-shaped value it carried is kept for the
+- The plugin enforces that contract at the host boundary. As the last step of
+  the Task `tool.execute.before` chain, after every plugin-side reader of the
+  plan id has run (including the gate-denial streak reset, which must key on the
+  same arguments the denial side saw), a `task_id` that is not a session handle
+  (`ses…`) is removed from the arguments the host executes. The plan-shaped value it carried is kept for the
   `tool.execute.after` readers on the stored argument snapshot as
   `plan_task_id`, a field the task-id resolver already honours. Session handles
   are left untouched, including the child session id the worktree path writes.
@@ -19,7 +20,8 @@
   context and dispatch bindings reserved for the call are released. The rollback
   reuses the denied-dispatch entry point, which is idempotent and
   settlement-state aware, so a part that errors after `tool.execute.after` has
-  settled the call is a no-op.
+  settled the call is a no-op. The aborted record names the real cause ("Task
+  tool failed in the host after the dispatch was admitted"), not a gate denial.
 
 ## Why
 

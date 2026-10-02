@@ -158,6 +158,14 @@ describe('Task.task_id host contract through the exported hooks', () => {
 			},
 		});
 		expect(walState(dir)).toBe('ABORTED');
+		// The audit trail names the real cause, not a plugin gate denial.
+		const wal = JSON.parse(
+			readFileSync(
+				path.join(dir, '.swarm', 'coder-settlements', '1.1.json'),
+				'utf8',
+			),
+		) as { abortReason?: string };
+		expect(wal.abortReason).toContain('failed in the host');
 
 		// The retry is admitted instead of CODER_DISPATCH_IN_PROGRESS.
 		const retryCallID = 'chatcmpl-tool-retry-0002';
@@ -181,7 +189,7 @@ describe('Task.task_id host contract through the exported hooks', () => {
 		}
 	});
 
-	test('a completed Task part is not a rollback trigger', async () => {
+	test('a completed or running Task part is not a rollback trigger', async () => {
 		const callID = 'chatcmpl-tool-completed-0003';
 		const output = {
 			args: { prompt: PROMPT, subagent_type: 'coder' } as Record<
@@ -206,6 +214,32 @@ describe('Task.task_id host contract through the exported hooks', () => {
 						callID,
 						tool: 'task',
 						state: { status: 'running', input: output.args },
+					},
+				},
+			},
+		});
+		expect(walState(dir)).toBe('DISPATCHED');
+		// A completed part (the sub-agent returned) must never abort a live
+		// settlement either: toolAfter owns that call's settlement.
+		await plugin.hooks.event({
+			event: {
+				type: 'message.part.updated',
+				properties: {
+					part: {
+						id: 'prt_completed_0003',
+						sessionID: SESSION,
+						messageID: 'msg_completed_0003',
+						type: 'tool',
+						callID,
+						tool: 'task',
+						state: {
+							status: 'completed',
+							input: output.args,
+							output: 'ok',
+							title: 'done',
+							metadata: {},
+							time: { start: 1, end: 2 },
+						},
 					},
 				},
 			},

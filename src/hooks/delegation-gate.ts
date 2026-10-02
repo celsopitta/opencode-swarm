@@ -3695,6 +3695,7 @@ export function createDelegationGateHook(
 	abortDeniedSettlementForCall: (
 		callID: string,
 		sessionID?: string,
+		reason?: string,
 	) => Promise<void>;
 } {
 	// Initialize durable worktree merge-back status before any coders dispatch
@@ -7839,6 +7840,7 @@ ${warningLines.join('\n')}`;
 		abortDeniedSettlementForCall: async (
 			callID: string,
 			sessionID?: string,
+			reason: string = 'dispatch denied by a fail-closed gate after settlement began',
 		): Promise<void> => {
 			// Reviewer/test-engineer reservations do not create a coder settlement,
 			// so the early return below must still drain their call-scoped route
@@ -7872,8 +7874,7 @@ ${warningLines.join('\n')}`;
 					directory,
 					taskId: begun.taskId,
 					transitionId: begun.transitionId,
-					reason:
-						'dispatch denied by a fail-closed gate after settlement began',
+					reason,
 				});
 			} catch (error) {
 				logger.criticalWarn(

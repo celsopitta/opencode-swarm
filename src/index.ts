@@ -3943,6 +3943,7 @@ async function initializeOpenCodeSwarm(
 						await delegationGateHooks.abortDeniedSettlementForCall(
 							failedCallID,
 							failedParentSessionID,
+							'Task tool failed in the host after the dispatch was admitted (no tool.execute.after followed)',
 						);
 					} catch (rollbackError) {
 						log('host-failed Task rollback failed (non-fatal)', {
@@ -5391,28 +5392,6 @@ async function initializeOpenCodeSwarm(
 					});
 				}
 
-				// Host contract for Task.task_id (src/hooks/task-arg-host-contract.ts):
-				// the host reads that field as a sub-agent session handle and throws
-				// on anything else AFTER this chain admitted the call — with no
-				// toolAfter to settle what the chain began. Every plugin-side reader
-				// of the plan-shaped value has run by now (scope, settlement begin,
-				// Stage B routing, directives, phase participation, the action
-				// digest above), so strip it here, LAST, and keep the plan id for the
-				// toolAfter readers on the stored snapshot under `plan_task_id`, a
-				// field the task-id resolver already honours. The stored snapshot is
-				// the same object as output.args, so it is re-stored as a copy.
-				if (isTaskToolId(input.tool)) {
-					const normalized = stripNonSessionTaskIdArg(toolBeforeArgs);
-					if (normalized.stripped) {
-						setStoredInputArgs(
-							input.callID,
-							normalized.planTaskId === undefined
-								? { ...toolBeforeArgs }
-								: { ...toolBeforeArgs, plan_task_id: normalized.planTaskId },
-						);
-					}
-				}
-
 				// B1 (#2063): the WHOLE handler completed, so this tool call is
 				// actually going to run — the denial streak for it is genuinely over.
 				// Scoped to this tool so a successful `read` cannot erase an
@@ -5443,6 +5422,30 @@ async function initializeOpenCodeSwarm(
 						delegatedAgent,
 						delegationTaskId,
 					);
+				}
+
+				// Host contract for Task.task_id (src/hooks/task-arg-host-contract.ts):
+				// the host reads that field as a sub-agent session handle and throws
+				// on anything else AFTER this chain admitted the call — with no
+				// toolAfter to settle what the chain began. This is the LAST step of
+				// the chain: every plugin-side reader of the plan-shaped value has run
+				// (scope, settlement begin, Stage B routing, directives, phase
+				// participation, the action digest, the gate-denial streak reset
+				// above — which must key on the same args the denial side saw). Strip
+				// it here and keep the plan id for the toolAfter readers on the stored
+				// snapshot under `plan_task_id`, a field the task-id resolver already
+				// honours. The stored snapshot is the same object as output.args, so
+				// it is re-stored as a copy.
+				if (isTaskToolId(input.tool)) {
+					const normalized = stripNonSessionTaskIdArg(toolBeforeArgs);
+					if (normalized.stripped) {
+						setStoredInputArgs(
+							input.callID,
+							normalized.planTaskId === undefined
+								? { ...toolBeforeArgs }
+								: { ...toolBeforeArgs, plan_task_id: normalized.planTaskId },
+						);
+					}
 				}
 			} catch (err) {
 				// A fail-closed gate denied this call. Count the denial, record it as
