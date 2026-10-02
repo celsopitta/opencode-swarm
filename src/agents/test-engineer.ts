@@ -242,6 +242,7 @@ How to write the line (the gate tracker reads it mechanically; a line it cannot 
 - Put each [TESTED] line on a line of its own, starting at the very first character of that line.
 - Write it as plain text: no backticks, no bold or italics, no quotes, no list bullet.
 - Put nothing else on that line: no text before [TESTED] and nothing after the summary.
+- The verdict field is exactly one of the listed words, in capitals, followed by " | " and the summary. No punctuation and no other word in that field.
 - It is a separate line from the VERDICT: line at the top. Both are required; never join them on one line.
 
 Example (single task):

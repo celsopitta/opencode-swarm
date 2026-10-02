@@ -56,6 +56,7 @@ describe('structured verdict row instructions', () => {
 				`Put each ${c.marker} line on a line of its own, starting at the very first character of that line.`,
 				'Write it as plain text: no backticks, no bold or italics, no quotes, no list bullet.',
 				`Put nothing else on that line: no text before ${c.marker} and nothing after the summary.`,
+				'The verdict field is exactly one of the listed words, in capitals, followed by " | " and the summary. No punctuation and no other word in that field.',
 				'It is a separate line from the VERDICT: line at the top. Both are required; never join them on one line.',
 			]) {
 				expect(section).toContain(sentence);
@@ -88,6 +89,23 @@ describe('structured verdict row instructions', () => {
 		]) {
 			expect(parsePerTaskVerdicts(unreadable).verdicts.size).toBe(0);
 		}
+	});
+
+	it('a verdict field that is not exactly one of the listed words is not read', () => {
+		// Ties the "exactly one of the listed words" instruction to the parser.
+		for (const row of [
+			'[TESTED] | task-1.1 | PASSED | 20/20',
+			'[TESTED] | task-1.1 | PASS: 20/20',
+			'[REVIEWED] | task-1.1 | APPROVED. | fine',
+			'[REVIEWED] | task-1.1 | APPROVED WITH CONCERNS | see notes',
+		]) {
+			expect(parsePerTaskVerdicts(row).verdicts.size).toBe(0);
+		}
+		expect(
+			parsePerTaskVerdicts('[TESTED] | task-1.1 | pass | 20/20').verdicts.get(
+				'1.1',
+			)?.verdict,
+		).toBe('PASS');
 	});
 
 	it('architect delegation examples ask test_engineer for the [TESTED] row', () => {
