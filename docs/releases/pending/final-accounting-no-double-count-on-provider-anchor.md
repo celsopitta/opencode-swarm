@@ -55,8 +55,9 @@ host's own count reaches them.
   turn itself changed (a new knowledge directive, a drained advisory). That
   difference is signed: an injection that first appears in a request is
   under-counted by its size for that one request, bounded by the producers'
-  caps (knowledge `max_injection_tokens`, the advisory block limit, the memory
-  recall budget, the system-enhancer budget — about 11K tokens in total with
+  caps (`context_budget.max_injection_tokens` for the system-enhancer,
+  `knowledge.inject_char_budget` for knowledge, the advisory block's 6,000-byte
+  limit, the memory recall `tokenBudget` — roughly 8K tokens in total with
   default settings), and it is inside the next completed call's host count.
   A drained injection over-counts the same way for one request.
 - The subtraction needs a ledger. When none exists at accounting time (a
