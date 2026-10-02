@@ -134,6 +134,27 @@ async function runGateDispatch(
 	await hook.toolAfter({ tool: 'Task', sessionID, callID, args }, { output });
 }
 
+// No parseable verdict row: no gate recorded, nothing advances in memory or on
+// disk, the architect is told. NOT rework_required (that was session-map only).
+async function expectUnsettledAndReported(
+	directory: string,
+	session: ReturnType<typeof ensureAgentSession>,
+	taskId: string,
+): Promise<void> {
+	const evidence = await readTaskEvidence(directory, taskId);
+	expect(evidence?.gates?.reviewer).toBeUndefined();
+	expect(evidence?.workflow?.state).toBe('pre_check_passed');
+	expect(session.taskWorkflowStates.get(taskId)).toBe('pre_check_passed');
+	expect(session.stageBCompletion?.get(taskId)).toBeUndefined();
+	const advisories = (session.pendingAdvisoryMessages ?? []).filter(
+		(m) =>
+			m.includes('STAGE B SETTLEMENT DROPPED') &&
+			m.includes(`reviewer task ${taskId}`) &&
+			m.includes('[REVIEWED]'),
+	);
+	expect(advisories).toHaveLength(1);
+}
+
 describe('FR-007 set-dispatch per-task attribution', () => {
 	let tempDir: string;
 	let isolatedEnv: ReturnType<typeof createIsolatedTestEnv> | undefined;
@@ -242,7 +263,6 @@ describe('FR-007 set-dispatch per-task attribution', () => {
 		session.taskWorkflowStates.set('1.1', 'pre_check_passed');
 		session.currentTaskId = '1.1';
 
-		// Output without structured verdict lines — should fall back to single-task
 		const output = {
 			output: `VERDICT: APPROVED
 Reviewed the code. No issues found.`,
@@ -257,7 +277,7 @@ Reviewed the code. No issues found.`,
 			output.output,
 		);
 
-		expect(session.taskWorkflowStates.get('1.1')).toBe('rework_required');
+		await expectUnsettledAndReported(tempDir, session, '1.1');
 	});
 
 	it('SC-023.2: empty output fails closed for the exact task', async () => {
@@ -271,7 +291,6 @@ Reviewed the code. No issues found.`,
 		session.taskWorkflowStates.set('1.1', 'pre_check_passed');
 		session.currentTaskId = '1.1';
 
-		// Empty output — should fall back
 		await runGateDispatch(
 			hook,
 			'sess-sc23-2',
@@ -281,7 +300,7 @@ Reviewed the code. No issues found.`,
 			'',
 		);
 
-		expect(session.taskWorkflowStates.get('1.1')).toBe('rework_required');
+		await expectUnsettledAndReported(tempDir, session, '1.1');
 	});
 
 	it('SC-023.3: mixed output — parseable verdicts take precedence over fallback', async () => {
@@ -382,7 +401,7 @@ Reviewed the code. No issues found.`,
 			output.output,
 		);
 
-		expect(session.taskWorkflowStates.get('1.1')).toBe('rework_required');
+		await expectUnsettledAndReported(tempDir, session, '1.1');
 	});
 
 	it('SC-022.REGRESSION: reviewer verdict for task-2.1 only does NOT over-attribute to 2.2 or 2.3', async () => {
