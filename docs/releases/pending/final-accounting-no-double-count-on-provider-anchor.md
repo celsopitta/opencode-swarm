@@ -59,9 +59,10 @@ host's own count reaches them.
   subtracted, and the tail still counts that request's injections as before.
 - `context_status` measures persisted messages only and was never affected.
   The context-budget pruning hook runs early in the chain and sees only the
-  two injections placed before it. After this change the readings agree on the
-  provider-anchored path up to the remaining over-count sources: the advisories'
-  own tokens, the context-budget hook's warning (not ledger-recorded), and the
-  gap between a producer's recorded estimate and its fenced carrier text. All of
-  them err towards reporting more, never less.
+  pipeline tracker's phase reminder placed before it. After this change the
+  readings agree on the provider-anchored path up to the remaining over-count
+  sources: the advisories' own tokens, the context-budget hook's warning and
+  the pipeline tracker's phase reminder (neither is ledger-recorded), and the
+  gap between a producer's recorded estimate and its fenced carrier text. All
+  of them err towards reporting more, never less.
 - The debug log line now reports both `systemSurface=` and `messagesSurface=`.
