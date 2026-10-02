@@ -23,6 +23,11 @@ set-dispatch alike:
 `[REVIEWED]` verdicts are `APPROVED | REJECTED | CONCERNS`; `[TESTED]` verdicts
 are `PASS | FAIL | SKIPPED`. Rows with `task-X.Y` are normalized to `X.Y`;
 unsafe or non-plan IDs are ignored.
+The verdict field must be exactly one of those words; letter case does not
+matter. In a foreground Task dispatch, a row for a task with anything else in
+that field (`PASSED`, `FAIL: 3 errors`, `APPROVED WITH CONCERNS`) is
+unreadable: the task gets no verdict from that reply, even if the reply also
+has a readable row for it, and it is reported to you like a missing row.
 
 A row that does not start its line is not read: inline backticks or bold around
 it, a quote or list marker, or any text before it on the same line (for example

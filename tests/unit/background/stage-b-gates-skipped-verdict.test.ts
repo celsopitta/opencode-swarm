@@ -169,6 +169,81 @@ describe('background Stage B TESTED SKIPPED verdict is retryable, not a failure 
 		expect(evidence?.gates?.reviewer).toBeDefined();
 	});
 
+	test('regression: a lower-case skipped verdict is still a skip, not a failure', async () => {
+		// Previous code matched the row with the `i` flag but compared the
+		// captured word with === 'SKIPPED' / 'PASS' / 'APPROVED', so a
+		// lower-case word fell through to the failure branch.
+		await prepareTask();
+
+		const outcome = await ingest(
+			`[tested] | task-${TASK_ID} | skipped | tests not run`,
+		);
+
+		expect(outcome.skipped).toBe(true);
+		expect(outcome.consumed).toBe(true);
+		const session = swarmState.agentSessions.get('parent-2756-skip')!;
+		expect(session.taskWorkflowStates.get(TASK_ID)).toBe('reviewer_run');
+		const evidence = await readTaskEvidence(directory, TASK_ID);
+		expect(evidence?.workflow?.state).toBe('reviewer_run');
+		expect(evidence?.workflow?.lastOutcome).not.toBe('stage_b_failed');
+		expect(evidence?.gates?.reviewer).toBeDefined();
+	});
+
+	test('regression: a lower-case pass verdict settles the test gate instead of rejecting the task', async () => {
+		// Previous code compared the captured word with === 'PASS', so `pass`
+		// was read as a failure: stage_b_failed and rework_required.
+		await prepareTask();
+
+		const outcome = await ingest(`[tested] | task-${TASK_ID} | pass | 20/20`);
+
+		expect(outcome.ok).toBe(true);
+		expect(outcome.consumed).toBe(true);
+		const evidence = await readTaskEvidence(directory, TASK_ID);
+		expect(evidence?.workflow?.state).toBe('tests_run');
+		expect(evidence?.workflow?.lastOutcome).not.toBe('stage_b_failed');
+		expect(evidence?.gates?.test_engineer).toBeDefined();
+	});
+
+	test('regression: a lower-case approved verdict settles the reviewer gate instead of rejecting the task', async () => {
+		// Same comparison as the pass case, exercised through the reviewer role:
+		// `approved` used to fall through to the failure branch.
+		await transitionTaskWorkflowEvidence(directory, TASK_ID, {
+			type: 'accepted_mutation',
+			agentType: 'coder',
+			expectedGeneration: 0,
+			transitionId: `coder:${TASK_ID}`,
+		});
+		await transitionTaskWorkflowEvidence(directory, TASK_ID, {
+			type: 'stage_a_passed',
+			expectedGeneration: 1,
+			transitionId: `stage-a:${TASK_ID}`,
+		});
+		const session = swarmState.agentSessions.get('parent-2756-skip')!;
+		session.taskWorkflowStates.set(TASK_ID, 'pre_check_passed');
+		const text = `[reviewed] | task-${TASK_ID} | approved | fine`;
+
+		const outcome = await ingestBackgroundStageBCompletion({
+			directory,
+			record: {
+				...stageBRecord(captureWorkspaceSnapshot(directory)),
+				normalizedAgent: 'reviewer',
+				swarmPrefixedAgent: 'reviewer',
+			},
+			result: {
+				text,
+				chars: text.length,
+				truncated: false,
+				digest: 'call-2756-skip:digest',
+			},
+		});
+
+		expect(outcome.ok).toBe(true);
+		const evidence = await readTaskEvidence(directory, TASK_ID);
+		expect(evidence?.workflow?.state).toBe('reviewer_run');
+		expect(evidence?.workflow?.lastOutcome).not.toBe('stage_b_failed');
+		expect(evidence?.gates?.reviewer).toBeDefined();
+	});
+
 	test('genuine FAIL ingest keeps the rejection semantics', async () => {
 		await prepareTask();
 

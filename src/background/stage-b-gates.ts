@@ -99,10 +99,13 @@ function structuredStageBVerdict(
 				);
 	const match = pattern.exec(text);
 	if (!match) return null;
-	if (match[1] === 'APPROVED' || match[1] === 'PASS') return 'pass';
+	// The row is matched case-insensitively; compare it that way too, or a
+	// lower-case positive verdict would be read as a failure.
+	const verdict = match[1].toUpperCase();
+	if (verdict === 'APPROVED' || verdict === 'PASS') return 'pass';
 	// SKIPPED means the tests were not run (issue #2756): a tool-argument
 	// outcome the caller can retry, not a code failure.
-	if (match[1] === 'SKIPPED') return 'skip';
+	if (verdict === 'SKIPPED') return 'skip';
 	return 'fail';
 }
 

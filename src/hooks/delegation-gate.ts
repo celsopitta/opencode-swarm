@@ -2537,9 +2537,14 @@ function extractTaskFileDirectives(
  *   [TESTED] | task-2.1 | PASS | ...
  *   [REVIEWED] | 2.1 | APPROVED | ...   (bare task ID without prefix)
  *
- * Returns a Map from task ID to verdict string (e.g. "APPROVED", "REJECTED", "PASS", "FAIL").
+ * Returns a Map from task ID to verdict (e.g. "APPROVED", "REJECTED", "PASS", "FAIL"),
+ * always in upper case whatever case the reply used.
  * Only task IDs matching strict task ID format (N.M or N.M.P) are included.
- * Lines that don't match the pattern are silently ignored.
+ * The verdict word must be the whole field (followed by `|` or the end of the line).
+ * A line that is a verdict row for a task but whose verdict field is not one of the
+ * accepted words is not ignored: the task is listed in `unreadable`, an error is
+ * reported, and the task gets no verdict from this reply even if another row for it
+ * is readable. Any other line is ignored.
  *
  * @param outputText - Raw text output from the agent dispatch
  * @returns StageBAttributionResult with typed verdicts and any parsing errors
@@ -2552,6 +2557,8 @@ export interface VerdictEntry {
 export interface StageBAttributionResult {
 	verdicts: Map<string, VerdictEntry>;
 	errors: string[];
+	/** Tasks that have a verdict row whose verdict field could not be read. */
+	unreadable: Set<string>;
 }
 
 export function parsePerTaskVerdicts(
@@ -2559,17 +2566,31 @@ export function parsePerTaskVerdicts(
 ): StageBAttributionResult {
 	const verdicts = new Map<string, VerdictEntry>();
 	const errors: string[] = [];
+	// The verdict word must be the whole field: it is followed by the next
+	// `|` or by the end of the line. Without that boundary a prefix counted as
+	// the verdict ("passed 3 of 20, 17 failing" read as PASS, "APPROVED WITH
+	// CONCERNS" as APPROVED).
+	// Each pattern is applied to one trimmed line, so no multiline flag: with
+	// it, a lone CR or U+2028 inside a line would count as a line end.
 	const reviewedPattern =
-		/^\[REVIEWED\]\s*\|\s*(?:task-)?(\d+\.\d+(?:\.\d+)*)\s*\|\s*(APPROVED|REJECTED|CONCERNS)\s*\|?/im;
+		/^\[REVIEWED\]\s*\|\s*(?:task-)?(\d+\.\d+(?:\.\d+)*)\s*\|\s*(APPROVED|REJECTED|CONCERNS)\s*(?:\||$)/i;
 	const testedPattern =
-		/^\[TESTED\]\s*\|\s*(?:task-)?(\d+\.\d+(?:\.\d+)*)\s*\|\s*(PASS|FAIL|SKIPPED)\s*\|?/im;
+		/^\[TESTED\]\s*\|\s*(?:task-)?(\d+\.\d+(?:\.\d+)*)\s*\|\s*(PASS|FAIL|SKIPPED)\s*(?:\||$)/i;
+	// A line that is a verdict row for a task (marker, task id, field
+	// separator) but whose verdict field is not one of the accepted words.
+	// It is not a verdict, and it must not be ignored either: a reply that
+	// says `FAILED | …` and then `PASS | …` for one task is contradictory.
+	const rowHeadPattern =
+		/^\[(?:REVIEWED|TESTED)\]\s*\|\s*(?:task-)?(\d+\.\d+(?:\.\d+)*)\s*\|/i;
+	const unreadableRowTasks = new Set<string>();
 
 	for (const line of outputText.split(/\r?\n/)) {
 		const trimmed = line.trim();
 		let match = reviewedPattern.exec(trimmed);
 		if (match) {
 			const taskId = match[1];
-			const verdict = match[2];
+			// The row is matched case-insensitively; compare it that way too.
+			const verdict = match[2].toUpperCase();
 			if (isStrictTaskId(taskId)) {
 				const existing = verdicts.get(taskId);
 				if (existing) {
@@ -2587,7 +2608,8 @@ export function parsePerTaskVerdicts(
 		match = testedPattern.exec(trimmed);
 		if (match) {
 			const taskId = match[1];
-			const verdict = match[2];
+			// The row is matched case-insensitively; compare it that way too.
+			const verdict = match[2].toUpperCase();
 			if (isStrictTaskId(taskId)) {
 				const existing = verdicts.get(taskId);
 				if (existing) {
@@ -2600,9 +2622,20 @@ export function parsePerTaskVerdicts(
 					verdicts.set(taskId, { verdict, kind: 'TESTED' });
 				}
 			}
+			continue;
 		}
+		const head = rowHeadPattern.exec(trimmed);
+		if (head && isStrictTaskId(head[1])) unreadableRowTasks.add(head[1]);
 	}
-	return { verdicts, errors };
+	// Fail closed on a contradictory reply: a task that has a readable row
+	// and an unreadable one gets no verdict at all.
+	for (const taskId of unreadableRowTasks) {
+		const dropped = verdicts.delete(taskId);
+		errors.push(
+			`STAGE_B_VERDICT_UNREADABLE: task ${taskId} has a verdict row whose verdict field is not one of the accepted words${dropped ? '; its other verdict row was discarded' : ''}`,
+		);
+	}
+	return { verdicts, errors, unreadable: unreadableRowTasks };
 }
 
 /**
@@ -3496,7 +3529,7 @@ const STAGE_B_SETTLEMENT_DROP_REASONS: Record<
 		'gate evidence recording rejected the settlement (generation fencing)',
 	rejection_persist_failed: 'the rejection verdict could not be persisted',
 	verdict_missing:
-		'the reply had no parseable verdict row (a row must start its own line as plain text)',
+		'the reply had no parseable verdict row (missing, not at the start of its own line as plain text, or with an unrecognized verdict field)',
 };
 
 /** Marker of the verdict row a Stage B gate agent must emit. */
@@ -6519,13 +6552,17 @@ export function createDelegationGateHook(
 									// only, which no durable state or recovery path agreed
 									// with.
 									//
-									// One advisory per reply at most. It names the
-									// dispatch's own task (resolved from task_id or an
-									// unambiguous prompt id). The other ids in the dispatch
-									// context can come from task numbers that merely appear
-									// in the prompt text, so they are never reported one by
-									// one; they are listed only when the dispatch has no
-									// task of its own and the reply had no row at all.
+									// What is reported:
+									// - the dispatch's own task (resolved from task_id or
+									//   an unambiguous prompt id) when it has no verdict;
+									// - when the dispatch has no task of its own and the
+									//   reply had no row at all, one dispatch-wide advisory
+									//   that lists the awaited tasks;
+									// - any other awaited task for which the reply itself
+									//   carries an unreadable row (at most ten).
+									// An awaited task that is simply absent from the reply
+									// is not reported on its own: the dispatch context also
+									// holds task numbers that merely appear in the prompt.
 									const dispatchCtx = stageBDispatchContextByCallID.get(
 										input.callID,
 									);
@@ -6545,6 +6582,14 @@ export function createDelegationGateHook(
 									// re-entry dispatch carries a task id but binds no
 									// task for settlement (its context is empty): no row
 									// could settle there, so a missing row is not a drop.
+									// A task whose row is there but unreadable gets a detail
+									// that says so: the architect can see a row in the reply
+									// and would otherwise not know why it did not count.
+									let dispatchWideReported = false;
+									const missingDetail = (taskId: string): string =>
+										attributionResult.unreadable.has(taskId)
+											? `the reply had a ${marker} row for this task whose verdict field is not one of the accepted words, so no verdict was read for it`
+											: `the reply had no parseable ${marker} verdict row for this task`;
 									if (primaryTaskId && awaitedTaskIds.includes(primaryTaskId)) {
 										if (!attributionResult.verdicts.has(primaryTaskId)) {
 											const others = awaitedTaskIds.filter(
@@ -6556,7 +6601,7 @@ export function createDelegationGateHook(
 												callID: input.callID,
 												reasonClass: 'verdict_missing',
 												detail:
-													`the reply had no parseable ${marker} verdict row for this task` +
+													missingDetail(primaryTaskId) +
 													(noRows && others.length > 0
 														? ` (rows were also awaited for: ${boundList(others)})`
 														: ''),
@@ -6568,6 +6613,7 @@ export function createDelegationGateHook(
 										noRows &&
 										awaitedTaskIds.length > 0
 									) {
+										dispatchWideReported = true;
 										warnStageBSettlementDropped(session, {
 											taskId: awaitedTaskIds[0]!,
 											agent: targetAgent,
@@ -6578,6 +6624,38 @@ export function createDelegationGateHook(
 											dispatchWide: true,
 										});
 									}
+									// Any other awaited task for which the reply itself
+									// carries an unreadable row is reported too. Unlike a
+									// task number that merely appears in the prompt, the
+									// reply addressed this task, so staying silent would
+									// hide a dropped verdict. At most ten advisories; the
+									// last one says how many more there were. Skipped when
+									// the dispatch-wide advisory already covers the reply.
+									const unreadableOthers = dispatchWideReported
+										? []
+										: awaitedTaskIds.filter(
+												(id) =>
+													id !== primaryTaskId &&
+													attributionResult.unreadable.has(id),
+											);
+									const reportedOthers = unreadableOthers.slice(0, 10);
+									const unreportedOthers =
+										unreadableOthers.length - reportedOthers.length;
+									reportedOthers.forEach((taskId, index) => {
+										const isLast = index === reportedOthers.length - 1;
+										warnStageBSettlementDropped(session, {
+											taskId,
+											agent: targetAgent,
+											callID: input.callID,
+											reasonClass: 'verdict_missing',
+											detail:
+												missingDetail(taskId) +
+												(isLast && unreportedOthers > 0
+													? ` (${unreportedOthers} more awaited task(s) in this reply also had an unreadable row)`
+													: ''),
+											drops: stageBSettlementDrops,
+										});
+									});
 									if (attributionResult.verdicts.size === 0) {
 										logger.warn(
 											`[delegation-gate] STAGE_B_ATTRIBUTION_MISSING: ${targetAgent} dispatch for call ${input.callID} returned no structured verdict lines. Expected tasks: ${(awaitedTaskIds.length > 0 ? awaitedTaskIds : primaryTaskId ? [primaryTaskId] : []).join(', ') || 'unknown'}. Agent output must include [REVIEWED] or [TESTED] verdict lines.`,

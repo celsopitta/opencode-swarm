@@ -20,8 +20,10 @@ the task the gate attributes the dispatch to (`task_id`, an unambiguous prompt
 id, or the session's current task), and only when the dispatch awaited a Stage
 B verdict for that task. A PR-review re-entry dispatch binds no task for
 settlement and is never reported. Task numbers that only appear in the prompt
-text are never reported one by one; when the reply has no row at all they are
-listed inside the one advisory. A dispatch with no task of its own gets a
+text are not reported one by one for being absent from the reply; when the
+reply has no row at all they are listed inside the one advisory. (An awaited
+task for which the reply carries an unreadable row is reported; see
+`stage-b-verdict-word-case.md`.) A dispatch with no task of its own gets a
 single dispatch-wide advisory asking for one row per awaited task, and only
 when the reply had no row at all.
 
