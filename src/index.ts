@@ -232,6 +232,7 @@ import {
 	moveGuidanceCarriersToEnd,
 } from './hooks/system-guidance-carrier.js';
 import { createSystemRenderBoundaryHook } from './hooks/system-render-boundary.js';
+import { stripNonSessionTaskIdArg } from './hooks/task-arg-host-contract.js';
 import {
 	createTrajectoryLoggerHook,
 	recordDeniedToolCall,
@@ -3843,6 +3844,7 @@ async function initializeOpenCodeSwarm(
 									type?: string;
 									tool?: string;
 									state?: {
+										status?: string;
 										metadata?: {
 											sessionId?: string;
 										};
@@ -3907,6 +3909,69 @@ async function initializeOpenCodeSwarm(
 								generation: fullAutoRunState.runGeneration,
 							});
 						}
+					}
+				}
+				// Host-side Task failure BEFORE the child ran (v1 hosts): the tool
+				// part reaches `state.status === 'error'` when the Task tool itself
+				// threw — for example on a `task_id` the host could not resolve, an
+				// unknown agent, or the nesting-depth limit — and the host fires no
+				// tool.execute.after for a thrown tool. Whatever the before-chain began
+				// for that callID (a DISPATCHED coder settlement, Stage B route slots,
+				// dispatch bindings) would otherwise stay reserved until a human runs
+				// `/swarm recover`.
+				//
+				// Discriminator: the host's Task tool publishes
+				// `state.metadata.sessionId` (the child session) BEFORE the child runs
+				// and keeps it on every later state, including an abort ("Tool
+				// execution aborted", interrupted) and a child-session failure. An
+				// errored part WITHOUT a child session id is therefore a call the host
+				// rejected before any sub-agent existed — the only case rolled back
+				// here. A part that carries a child id may stand for real work (files
+				// written, a lane worktree): it is left DISPATCHED for the recovery
+				// path, exactly as before this branch existed.
+				//
+				// The rollback entry point is idempotent and settlement-state aware
+				// (`abortCoderSettlement` returns 'not-dispatched' once toolAfter has
+				// settled), so a part that errors AFTER toolAfter ran is a no-op here.
+				// The v2 host adapter maps tool failures to `message.updated` and
+				// drives toolAfter with an error state instead, so this branch never
+				// races it.
+				if (
+					lifecycleEvent?.type === 'message.part.updated' &&
+					lifecycleEvent.properties?.part?.type === 'tool' &&
+					typeof lifecycleEvent.properties.part.tool === 'string' &&
+					isTaskToolId(lifecycleEvent.properties.part.tool) &&
+					lifecycleEvent.properties.part.state?.status === 'error' &&
+					!(
+						typeof lifecycleEvent.properties.part.state?.metadata?.sessionId ===
+							'string' &&
+						lifecycleEvent.properties.part.state.metadata.sessionId.trim() !==
+							''
+					) &&
+					typeof lifecycleEvent.properties.part.callID === 'string' &&
+					lifecycleEvent.properties.part.callID.trim() !== ''
+				) {
+					const failedPart = lifecycleEvent.properties.part;
+					const failedCallID = lifecycleEvent.properties.part.callID;
+					const failedParentSessionID =
+						typeof failedPart.sessionID === 'string' &&
+						failedPart.sessionID.trim() !== ''
+							? failedPart.sessionID
+							: undefined;
+					try {
+						await delegationGateHooks.abortDeniedSettlementForCall(
+							failedCallID,
+							failedParentSessionID,
+							'Task tool failed in the host before the sub-agent ran (no child session, no tool.execute.after)',
+						);
+					} catch (rollbackError) {
+						log('host-failed Task rollback failed (non-fatal)', {
+							callID: failedCallID,
+							error:
+								rollbackError instanceof Error
+									? rollbackError.message
+									: String(rollbackError),
+						});
 					}
 				}
 				if (lifecycleEvent?.type === 'session.error') {
@@ -5376,6 +5441,30 @@ async function initializeOpenCodeSwarm(
 						delegatedAgent,
 						delegationTaskId,
 					);
+				}
+
+				// Host contract for Task.task_id (src/hooks/task-arg-host-contract.ts):
+				// the host reads that field as a sub-agent session handle and throws
+				// on anything else AFTER this chain admitted the call — with no
+				// toolAfter to settle what the chain began. This is the LAST step of
+				// the chain: every plugin-side reader of the plan-shaped value has run
+				// (scope, settlement begin, Stage B routing, directives, phase
+				// participation, the action digest, the gate-denial streak reset
+				// above — which must key on the same args the denial side saw). Strip
+				// it here and keep the plan id for the toolAfter readers on the stored
+				// snapshot under `plan_task_id`, a field the task-id resolver already
+				// honours. The stored snapshot is the same object as output.args, so
+				// it is re-stored as a copy.
+				if (isTaskToolId(input.tool)) {
+					const normalized = stripNonSessionTaskIdArg(toolBeforeArgs);
+					if (normalized.stripped) {
+						setStoredInputArgs(
+							input.callID,
+							normalized.planTaskId === undefined
+								? { ...toolBeforeArgs }
+								: { ...toolBeforeArgs, plan_task_id: normalized.planTaskId },
+						);
+					}
 				}
 			} catch (err) {
 				// A fail-closed gate denied this call. Count the denial, record it as

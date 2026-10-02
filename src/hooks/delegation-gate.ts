@@ -3695,6 +3695,7 @@ export function createDelegationGateHook(
 	abortDeniedSettlementForCall: (
 		callID: string,
 		sessionID?: string,
+		reason?: string,
 	) => Promise<void>;
 } {
 	// Initialize durable worktree merge-back status before any coders dispatch
@@ -6229,7 +6230,12 @@ export function createDelegationGateHook(
 							? directArgs.task_id
 							: typeof storedArgs?.task_id === 'string'
 								? storedArgs.task_id
-								: null))
+								: // The host boundary strips a plan-shaped `task_id` before
+									// the host runs the tool and re-stores it as
+									// `plan_task_id` (src/hooks/task-arg-host-contract.ts).
+									typeof storedArgs?.plan_task_id === 'string'
+									? storedArgs.plan_task_id
+									: null))
 					: null;
 			// The child has returned, so its exact write lease must end before
 			// settlement/merge bookkeeping. A durability failure fences the output;
@@ -7834,6 +7840,7 @@ ${warningLines.join('\n')}`;
 		abortDeniedSettlementForCall: async (
 			callID: string,
 			sessionID?: string,
+			reason: string = 'dispatch denied by a fail-closed gate after settlement began',
 		): Promise<void> => {
 			// Reviewer/test-engineer reservations do not create a coder settlement,
 			// so the early return below must still drain their call-scoped route
@@ -7867,8 +7874,7 @@ ${warningLines.join('\n')}`;
 					directory,
 					taskId: begun.taskId,
 					transitionId: begun.transitionId,
-					reason:
-						'dispatch denied by a fail-closed gate after settlement began',
+					reason,
 				});
 			} catch (error) {
 				logger.criticalWarn(
