@@ -3964,6 +3964,15 @@ export function createDelegationGateHook(
 		// one-directory prune; a ~50 ms elapsed-time TELEMETRY threshold logs
 		// (debug-gated) when exceeded — it observes latency, it does not bound
 		// it (AGENTS #1/#3/#10).
+		//
+		// A dispatch can reach here with no binding at all: a gate agent that
+		// resolves to no task (a plan critic, a sounding-board consultation)
+		// and a PR-review re-entry that is remembered before any generation
+		// is collected. There is nothing to reconstruct after a restart, so
+		// the store is not touched. The store reports an empty binding list
+		// as `false`, which would read here as a failed write and raise the
+		// always-on warning on a dispatch where nothing failed.
+		if (generations.size === 0) return;
 		const durableStart = Date.now();
 		const persisted = _internals.recordStageBDispatchBindings(directory, {
 			sessionID: sessionID ?? '',
