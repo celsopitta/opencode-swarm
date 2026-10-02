@@ -6229,7 +6229,12 @@ export function createDelegationGateHook(
 							? directArgs.task_id
 							: typeof storedArgs?.task_id === 'string'
 								? storedArgs.task_id
-								: null))
+								: // The host boundary strips a plan-shaped `task_id` before
+									// the host runs the tool and re-stores it as
+									// `plan_task_id` (src/hooks/task-arg-host-contract.ts).
+									typeof storedArgs?.plan_task_id === 'string'
+									? storedArgs.plan_task_id
+									: null))
 					: null;
 			// The child has returned, so its exact write lease must end before
 			// settlement/merge bookkeeping. A durability failure fences the output;

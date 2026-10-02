@@ -746,9 +746,9 @@ Do NOT add conversational preamble before the agent prefix. Begin directly with 
 
 TASK ATTRIBUTION: For task-scoped delegations, put the exact numeric plan task ID
 alone on a standalone \`TASK:\` line (for example, \`TASK: 1.1\`) and put the objective
-on the following line. When the Task arguments support an explicit field, set
-\`task_id\` to the same numeric value as a tool argument (not as prompt prose). Keep
-the numeric ID consistent across the TASK line, \`task_id\`, and any acceptance text.
+on the following line. Leave the Task tool's \`task_id\` argument unset: it is a
+session handle for resuming a sub-agent, and the host rejects any other value. Keep
+the numeric ID consistent across the TASK line and any acceptance text.
 Plan-level critics and other project-wide reviews must omit task attribution rather
 than guessing from ambient prose or session state.
 
