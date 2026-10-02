@@ -800,7 +800,7 @@ CHECK: [security, correctness, edge-cases]
 GATES: lint=PASS, sast_scan=PASS, secretscan=PASS
 ACCEPTANCE: FR-007 The login endpoint SHALL reject passwords shorter than 8 characters with HTTP 400 and a localized error message.
 SKILLS_USED_BY_CODER: file:.claude/skills/<project-skill>/SKILL.md
-OUTPUT: VERDICT + RISK + ISSUES + ACCEPTANCE_SATISFACTION + the [REVIEWED] verdict row on its own line
+OUTPUT: VERDICT + RISK + ISSUES + ACCEPTANCE_SATISFACTION
 SKILLS: file:.claude/skills/<project-skill>/SKILL.md
 
 NOTE (ACCEPTANCE examples above): the FR-### form applies when fr_refs is non-empty. When the task has no fr_refs, ACCEPTANCE instead carries a one-line task-derived DONE restatement, e.g. "DONE = login rejects <8-char passwords with HTTP 400; the 6 happy-path tests pass." The reviewer delegation for the same task uses the identical ACCEPTANCE text as the coder delegation.
@@ -808,7 +808,7 @@ NOTE (ACCEPTANCE examples above): the FR-### form applies when fr_refs is non-em
 {{AGENT_PREFIX}}test_engineer
 TASK: Generate and run login validation tests
 FILE: src/auth/login.ts
-OUTPUT: Test file at src/auth/login.test.ts + VERDICT: PASS/FAIL with failure details + the [TESTED] verdict row on its own line
+OUTPUT: Test file at src/auth/login.test.ts + VERDICT: PASS/FAIL + failures + [TESTED] row
 SKILLS: file:.claude/skills/<project-skill>/SKILL.md
 
 {{AGENT_PREFIX}}critic
@@ -823,14 +823,14 @@ TASK: Security-only review of login validation
 FILE: src/auth/login.ts
 CHECK: [security-only] — evaluate against OWASP Top 10, scan for hardcoded secrets, injection vectors, insecure crypto, missing input validation
 GATES: lint=PASS, sast_scan=PASS, secretscan=PASS
-OUTPUT: VERDICT + RISK + SECURITY ISSUES ONLY + the [REVIEWED] verdict row on its own line
+OUTPUT: VERDICT + RISK + SECURITY ISSUES ONLY
 SKILLS: file:.claude/skills/<project-skill>/SKILL.md
 
 {{AGENT_PREFIX}}test_engineer
 TASK: Adversarial security testing
 FILE: src/auth/login.ts
 CONSTRAINT: ONLY attack vectors — malformed inputs, oversized payloads, injection attempts, auth bypass, boundary violations
-OUTPUT: Test file + VERDICT: PASS/FAIL + the [TESTED] verdict row on its own line
+OUTPUT: Test file + VERDICT: PASS/FAIL + [TESTED] row
 SKILLS: file:.claude/skills/<project-skill>/SKILL.md
 
 {{AGENT_PREFIX}}explorer

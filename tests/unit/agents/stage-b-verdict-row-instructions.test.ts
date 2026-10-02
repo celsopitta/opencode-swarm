@@ -90,24 +90,20 @@ describe('structured verdict row instructions', () => {
 		}
 	});
 
-	it('architect delegation examples ask reviewer and test_engineer for the row', () => {
+	it('architect delegation examples ask test_engineer for the [TESTED] row', () => {
+		// Only the two test_engineer examples carry it: the architect prompt
+		// has a character budget, and the reviewer prompt states the row rule
+		// itself.
 		const prompt = createArchitectAgent('test-model').config.prompt!;
-		const outputLines = prompt
+		const testOutputs = prompt
 			.split('\n')
-			.filter((line) => line.startsWith('OUTPUT: '));
-		const testOutputs = outputLines.filter((l) =>
-			l.includes('VERDICT: PASS/FAIL'),
-		);
-		const reviewOutputs = outputLines.filter((l) =>
-			l.startsWith('OUTPUT: VERDICT + RISK'),
-		);
+			.filter(
+				(line) =>
+					line.startsWith('OUTPUT: ') && line.includes('VERDICT: PASS/FAIL'),
+			);
 		expect(testOutputs).toHaveLength(2);
-		expect(reviewOutputs).toHaveLength(2);
 		for (const line of testOutputs) {
-			expect(line).toContain('+ the [TESTED] verdict row on its own line');
-		}
-		for (const line of reviewOutputs) {
-			expect(line).toContain('+ the [REVIEWED] verdict row on its own line');
+			expect(line.endsWith(' + [TESTED] row')).toBe(true);
 		}
 	});
 });
