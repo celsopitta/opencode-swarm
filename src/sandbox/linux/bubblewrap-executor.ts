@@ -125,6 +125,122 @@ function shellEscape(s: string): string {
 }
 
 /**
+ * Split a shell string into words the way POSIX sh would for the narrow
+ * subset `wrapCommand` emits: unquoted words, single-quoted segments, and the
+ * `'\''` escape (`'` close, `\'` literal quote, `'` reopen). Returns null for
+ * anything outside that subset (double quotes, `$`, backticks, `;`, `&`, `|`,
+ * redirections, newlines outside quotes, ...), so a command that is not
+ * exactly a generated wrapper is never parsed into one.
+ */
+function splitGeneratedWords(command: string): string[] | null {
+	const words: string[] = [];
+	let current = '';
+	let inWord = false;
+	let i = 0;
+	while (i < command.length) {
+		const c = command[i] as string;
+		if (c === ' ' || c === '\t') {
+			if (inWord) {
+				words.push(current);
+				current = '';
+				inWord = false;
+			}
+			i++;
+			continue;
+		}
+		if (c === "'") {
+			const close = command.indexOf("'", i + 1);
+			if (close === -1) return null;
+			current += command.slice(i + 1, close);
+			inWord = true;
+			i = close + 1;
+			continue;
+		}
+		if (c === '\\') {
+			if (command[i + 1] !== "'") return null;
+			current += "'";
+			inWord = true;
+			i += 2;
+			continue;
+		}
+		if (!/[A-Za-z0-9_./=:,@%+-]/.test(c)) return null;
+		current += c;
+		inWord = true;
+		i++;
+	}
+	if (inWord) words.push(current);
+	return words;
+}
+
+/** Arity of every option `wrapCommand` can emit before the `--` separator. */
+const GENERATED_BWRAP_OPTION_ARITY: Readonly<Record<string, number>> = {
+	'--unshare-user': 0,
+	'--unshare-net': 0,
+	'--unshare-ipc': 0,
+	'--unshare-pid': 0,
+	'--die-with-parent': 0,
+	'--new-session': 0,
+	'--cap-drop': 1,
+	'--dev': 1,
+	'--size': 1,
+	'--tmpfs': 1,
+	'--proc': 1,
+	'--unsetenv': 1,
+	'--bind': 2,
+	'--ro-bind': 2,
+	'--setenv': 2,
+};
+
+/**
+ * If `command` is exactly the shape `BubblewrapSandboxExecutor.wrapCommand`
+ * emits (the bwrap binary, only options from the generated set with their
+ * exact arity, then `-- bash -c '<inner>'` and nothing after it), return the
+ * inner command; otherwise null. Nested generated wrappers are peeled
+ * repeatedly (bounded), because an agent that copies a wrapper from its own
+ * history can copy it more than once.
+ *
+ * The host stores the wrapped command as the agent's own tool input, so
+ * agents imitate it on later calls. Unwrapping a copy back to the inner
+ * command lets every guardrail check that command and wraps it exactly once
+ * with the plugin's own scope; the copied options (including any binds the
+ * agent invented) are discarded, never honored.
+ */
+export function unwrapGeneratedBubblewrapCommand(
+	command: string,
+): string | null {
+	let current = command.trim();
+	let unwrapped = false;
+	for (let depth = 0; depth < 8; depth++) {
+		const words = splitGeneratedWords(current);
+		if (!words || words.length < 4) break;
+		const binary = words[0];
+		if (binary !== BWRAP_ABSOLUTE && binary !== 'bwrap') break;
+		let i = 1;
+		let valid = true;
+		while (i < words.length && words[i] !== '--') {
+			const arity = GENERATED_BWRAP_OPTION_ARITY[words[i] as string];
+			if (arity === undefined || i + arity >= words.length) {
+				valid = false;
+				break;
+			}
+			i += 1 + arity;
+		}
+		if (
+			!valid ||
+			words[i] !== '--' ||
+			words[i + 1] !== 'bash' ||
+			words[i + 2] !== '-c' ||
+			words.length !== i + 4
+		) {
+			break;
+		}
+		current = (words[i + 3] as string).trim();
+		unwrapped = true;
+	}
+	return unwrapped ? current : null;
+}
+
+/**
  * Linux Bubblewrap sandbox executor.
  *
  * Instantiated with scope paths and an optional temp directory override.
