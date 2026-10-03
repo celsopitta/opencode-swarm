@@ -24,6 +24,7 @@ import {
 } from '../../config/schema';
 import { recordFullAutoSevereEvidenceEvent } from '../../full-auto/severe-result.js';
 import { setMacOSSandboxPolicy } from '../../sandbox/executor';
+import { unwrapGeneratedBubblewrapCommand } from '../../sandbox/linux/bubblewrap-executor';
 import { resolveScopePaths } from '../../sandbox/scope-resolver';
 import {
 	clearSandboxWrapOutcome,
@@ -1287,6 +1288,27 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 	}
 
 	/**
+	 * Replace an exact copy of the plugin's own Bubblewrap wrapper with its
+	 * inner command. Matches the tool name with the SAME exact predicate as
+	 * checkDestructiveCommand, checkShellWriteScope and applySandboxExecution
+	 * (`bash` / `shell`): for any other spelling none of those checks or the
+	 * wrap run, so unwrapping there would strip the copy's own isolation and
+	 * run the inner command unchecked.
+	 */
+	function unwrapCopiedSandboxWrapper(tool: string, args: unknown): void {
+		if (tool !== 'bash' && tool !== 'shell') return;
+		if (!args || typeof args !== 'object' || Array.isArray(args)) return;
+		const record = args as Record<string, unknown>;
+		if (typeof record.command !== 'string') return;
+		const inner = unwrapGeneratedBubblewrapCommand(record.command);
+		if (inner === null || inner.length === 0) return;
+		record.command = inner;
+		warn(
+			'[guardrails] unwrapped a copied sandbox wrapper; guardrail checks run on the inner command, which is sandboxed once when the sandbox applies',
+		);
+	}
+
+	/**
 	 * OS-native sandbox wrapper for bash/shell commands.
 	 */
 	/**
@@ -2392,6 +2414,18 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		input: { tool: string; sessionID: string; callID: string },
 		output: { args: unknown },
 	): Promise<void> => {
+		// The host stores the sandbox-wrapped command as the agent's own tool
+		// input, so agents copy `/usr/bin/bwrap ... -- bash -c '<cmd>'` into later
+		// calls. Before anything reads the command (circuit identity, audit,
+		// destructive and write-scope checks, the sandbox wrap), peel an exact
+		// copy of the plugin's own wrapper back to the inner command. Every
+		// check then runs on what the agent actually means to execute, and the
+		// sandbox wraps it once with the plugin's scope when the sandbox applies
+		// to the call (otherwise it runs plain); options in the copy are
+		// discarded. A bwrap command of any other shape is left as is and is
+		// refused by applySandboxExecution when it would be nested. Skipped when
+		// guardrails policy is not enforced: the plugin then rewrites nothing.
+		if (enforcePolicy) unwrapCopiedSandboxWrapper(input.tool, output.args);
 		if (enforcePolicy) {
 			assertNonTransientCircuitAllowsTool(input.sessionID, {
 				tool: input.tool,

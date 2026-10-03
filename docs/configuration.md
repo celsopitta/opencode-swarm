@@ -1526,9 +1526,15 @@ read-only before the declared scope paths, so a command can read the whole
 project it is working in (for example a test loading the module it exercises)
 while only the scope paths, `writable_roots`, and the private `/tmp` and `/dev`
 tmpfs mounts are writable. A workspace that itself lives under `/tmp` is hidden by that tmpfs.
-When a bash call is about to be wrapped by Bubblewrap and the command itself
-starts with `bwrap`, it is refused before it runs: a nested bwrap fails with
-"No permissions to create new namespace". Re-issue the plain command.
+opencode stores the wrapped command as the agent's own tool input, so agents
+tend to copy the `/usr/bin/bwrap ... -- bash -c '<command>'` form into later
+calls. While guardrails are enforced, a command that is an exact copy of the
+plugin's own wrapper is unwrapped to its inner command before any guardrail
+check; the copied options are discarded, and the inner command is sandboxed
+once when the sandbox applies to the call (otherwise it runs plain). Only the
+exact tool names `bash` and `shell` are unwrapped. Any other command that
+starts with `bwrap` is refused when Bubblewrap is about to wrap it, because a
+nested bwrap fails with "No permissions to create new namespace".
 
 The status surface reports filesystem, network, process, and effective
 strength separately as `real`, `weak`, or `none`. Linux reports missing

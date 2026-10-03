@@ -100,7 +100,11 @@ describe('guardrails sandbox: nested wrapper refusal and read-only workspace', (
 	});
 
 	it.each([
-		"/usr/bin/bwrap --unshare-user --die-with-parent --bind '/ws' '/ws' -- bash -c 'ls'",
+		// Not the plugin's own wrapper shape (it runs a program directly instead
+		// of `bash -c`), so it is not unwrapped and the nested refusal applies.
+		// An exact copy of the plugin's wrapper is unwrapped instead; see
+		// guardrails-sandbox-unwrap.test.ts.
+		"/usr/bin/bwrap --unshare-user --die-with-parent --bind '/ws' '/ws' -- ls",
 		'bwrap --ro-bind /usr /usr -- ls',
 		'exec /usr/local/bin/bwrap --dev /dev -- ls',
 		'env /bin/bwrap -- ls',
