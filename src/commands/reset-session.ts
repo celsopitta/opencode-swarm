@@ -172,10 +172,20 @@ async function releaseKnowledgeGateObligations(
 			releasedPairs.push(`${traceId}/${item.entry_id}`);
 		}
 		if (committed.rejected.length > 0) {
+			const reasons = committed.rejected.map((item) => item.reason).join('; ');
+			// Issue #3036: append the remedy after the existing reasons (the
+			// shipped message prefix stays byte-identical). Defensive branch: the
+			// live query above filters to this session's stamps, so wrong_session
+			// here can only fire on a drifted store — session names would be
+			// self-referential, so name the remedy only.
+			const hasWrongSession = committed.rejected.some(
+				(item) => item.reason === 'wrong_session',
+			);
 			results.push(
-				`⚠️ Partially released trace ${sanitizeDiagnosticText(traceId, 64)}: ${committed.rejected
-					.map((item) => item.reason)
-					.join('; ')}`,
+				`⚠️ Partially released trace ${sanitizeDiagnosticText(traceId, 64)}: ${reasons}` +
+					(hasWrongSession
+						? ` — a re-dispatched child session is an authorized filer for its dispatch's stamps, or surface fresh knowledge via knowledge_recall for a new trace`
+						: ''),
 			);
 		}
 	}
@@ -385,6 +395,10 @@ export async function handleResetSessionCommand(
 		clearTrajectoryStep(sessionId);
 	}
 	swarmState.agentSessions.clear();
+	// Issue #3036: dispatch lineage is session-scoped state — clear it with the
+	// other in-memory maps (the re-dispatch repopulates before any child files).
+	swarmState.dispatchParentByChildSession.clear();
+	swarmState.pendingDispatchAuthorizations = [];
 	clearSnapshotSessionOwnerships();
 	results.push(`✅ Cleared ${sessionCount} in-memory agent session(s)`);
 

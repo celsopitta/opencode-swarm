@@ -3525,6 +3525,7 @@ export const RETENTION_REGISTRY: readonly RetentionRow[] = [
 		readerCitations: [
 			'src/full-auto/state.ts:readPersisted — full-file mtime-cached parser with .bak recovery and unreadable fail-closed marker',
 			'src/full-auto/state.ts:loadFullAutoRunState, isFullAutoRunActive — session readers',
+			'src/full-auto/state.ts:maxPersistedOversightEvidenceSequence — allocation-time catch-up readdir over .swarm/evidence/<numeric-phase> full-auto-N.json names (bounded by phase count; PR #3024 review F3)',
 		],
 		schemaVersion: 'state schema with unreadable fail-closed marker',
 		stateClass: 'authoritative',

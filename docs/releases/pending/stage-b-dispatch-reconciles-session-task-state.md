@@ -1,86 +1,66 @@
-# A Stage B gate dispatch now reconciles the session with the durable task state
+# Stage B admission repairs a session view from an older generation; rework recovery refreshes the caller
 
 ## What
 
-**Dispatch admission (`src/hooks/delegation-gate.ts`).** When a `reviewer` or
-`test_engineer` dispatch is admitted because a task's durable workflow is at
-`pre_check_passed` or `reviewer_run`, the dispatching session's in-memory copy
-of that task is first brought in line with the durable state. This applies to
-every task the dispatch is admitted for, including plan tasks that are only
-mentioned in the prompt.
+**Stage B admission (`src/hooks/delegation-gate.ts`).** When a `reviewer` or
+`test_engineer` dispatch is admitted from a durable `pre_check_passed` or
+`reviewer_run`, two local additions run inside upstream's #3032 admission
+repair:
 
-**Recovery tools.** `recover_stage_a_task`
-(`src/workflow/settlement-recovery.ts`) and `recover_rework_task`
-(`src/workflow/rework-recovery.ts`) reconcile the calling session right after
-their durable `stage_a_passed` write. `recover_stage_a_task` also reconciles
-when the task is already past Stage A (the "already recovered" answer).
+- A Stage B completion marker in the session whose durable gate no longer
+  exists is dropped. Removing a marker can only make the session stricter.
+- A session view that ranks at or above the durable state is repaired from the
+  durable state when it is provably from an older generation: a completion
+  marker it relied on was just dropped, or its cached generation differs from
+  the durable one. Terminal views (`blocked`, `closed`, `complete`) are never
+  overwritten. Every other case keeps upstream's `isRepairableStageBView` rule.
 
-All of them use one helper, `reconcileSessionWorkflowWithEvidence` in
-`src/workflow/session-workflow-sync.ts`:
-
-- evidence that is missing or not authoritative is never copied into the
-  session;
-- a session that already agrees on state and generation is not touched;
-- a Stage B completion marker in the session is removed when the evidence no
-  longer holds the gate it stands for; markers whose gate is still recorded
-  are kept, and none is added;
-- council state for the task is never touched: a council generation bound at
-  an older durable generation stays as it is, so the council evidence writer
-  keeps rejecting verdicts collected before the generation changed.
+**`recover_rework_task` (`src/workflow/rework-recovery.ts`).** After its
+durable `stage_a_passed` write it refreshes the calling session's view with the
+same writer-side rule as the Stage A recovery writers
+(`shouldRefreshStageARecoveryView` / `applySessionWorkflowView` in
+`src/workflow/session-view.ts`, issue #3043).
 
 ## Why
 
-Dispatch admission and task completion read the evidence file. The Stage B
-settlement path reads `session.taskWorkflowStates` and skips any task that is
-not `pre_check_passed` or `reviewer_run` there, with no message. Nothing kept
-the two in step when the durable workflow was rewritten outside the session's
-own transitions. After a successful `recover_stage_a_task` the tool answered
-"Reviewer/test_engineer dispatch is permitted again", the dispatch was
-admitted, and every verdict that came back was skipped because the session
-still held `idle` or `blocked`. The same happened with a session that held
-`rework_required` against a durable `reviewer_run`. The task could not be
-completed in that process.
+A session that had settled the reviewer in an older generation kept
+`reviewer_run` plus a `reviewer` completion marker after the durable workflow
+was rotated elsewhere to a new `pre_check_passed` with no reviewer gate. The
+next test_engineer verdict advanced the view to `tests_run` on the stale
+marker, and the reviewer verdict that followed was skipped as "not Stage B
+eligible" forever, because the #3032 settlement-time resync never downgrades
+`tests_run`. Durable completion checks still blocked the task correctly, so
+nothing was wrongly completed; the task simply could not finish in that
+session.
 
-Reconciling at admission covers every writer, including ones that never touch
-the session: `/swarm recover` run from another process, a recovery performed by
-another session, or a restored evidence file.
+For rework recovery, upstream's admission repair already fixes a
+`rework_required` view on the next Stage B dispatch; refreshing at the writer
+makes the session consistent as soon as the tool returns.
 
-## Behavior change
+## History and narrowed coverage
 
-- A session whose copy of a task was ahead of or behind the durable state is
-  corrected to the durable state when a reviewer or test_engineer dispatch for
-  that task is admitted, so the verdict of that dispatch is settled against
-  the state the admission used.
-- A task state that exists only in the session and disagrees with the durable
-  one does not survive the next admitted Stage B dispatch for that task,
-  because the durable state is the authority. A durable `rework_required` is
-  not affected: such a task is not admitted.
-- A verdict from a reviewer or test_engineer dispatch that was launched before
-  the task was rejected is recorded if the task has since been brought back to
-  a Stage B state at the same generation (for example by `recover_rework_task`)
-  and a new Stage B dispatch for it has been admitted. The generation fence on
-  gate recording is unchanged.
+An earlier local version overwrote the session view unconditionally at Stage B
+admission and in both recovery tools. Upstream fixed the same split-brain in
+#3032/#3038 (consumer-side) and #3043 (writer-side) with guarded rules that
+never downgrade a view ahead of durable. When upstream was merged, the local
+helper was removed in favour of upstream's rules plus the two narrow additions
+above.
+
+This narrows what the earlier local version covered in one case: a recovery
+performed in another session or another process (including `/swarm recover`
+from the CLI) while this session's view is `blocked`. Upstream keeps a `blocked`
+view unrepaired on the consumer side by design, so this session's next Stage B
+verdict for that task is skipped. Remedy: re-run the recovery in this session,
+or continue in a fresh session.
+
+## Known caveat
+
+`applySessionWorkflowView` clears the task's council generation in the
+refreshed session, so council verdicts collected before a `recover_rework_task`
+must be re-collected after it (`submit_council_verdicts` fails closed with
+`TASK_COUNCIL_GENERATION_REQUIRED`, and the next council dispatch re-binds the
+generation). This matches upstream's other recovery legs.
 
 ## Migration
 
 None.
-
-## Known caveats
-
-- "Mentioned in the prompt" is textual: any plan task id that appears in the
-  dispatch text is a candidate, including an incidental number such as a
-  version (`bun 1.2`). That is how the gate already selected tasks; such a task
-  is now also reconciled when its durable state admits Stage B.
-- Reconciliation happens at Stage B dispatch and in the two recovery tools.
-  Other readers of the session copy (status text, guidance) can still show the
-  older state until the next Stage B dispatch for the task.
-- `/swarm recover` itself does not update any session; a session picks the
-  repair up at its next reviewer or test_engineer dispatch for the task.
-- A verdict for a task whose state changes between the dispatch and the reply
-  (for example a parallel REJECTED verdict that moves it to `rework_required`)
-  is still skipped without a message.
-
-## Tests
-
-- `tests/unit/workflow/recovery-session-sync.test.ts`
-- `tests/unit/hooks/delegation-gate-recovery-then-stage-b.test.ts`

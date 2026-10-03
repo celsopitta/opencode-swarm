@@ -99,6 +99,7 @@ describe('post-agent-update wiring smoke tests (Task 4.2)', () => {
 	 *   final_status: 'completed'
 	 *   implementation_summary: agentOutput.slice(0, 500)  (truncated)
 	 *   task_goal: ''
+	 *   decisions: extractContextDecisionsFromContextMd(bootstrapRoot, {...})
 	 *   directory: ctx.directory
 	 *
 	 * This test verifies the function is callable with that exact shape
@@ -122,7 +123,7 @@ describe('post-agent-update wiring smoke tests (Task 4.2)', () => {
 		}));
 		setAppendDecision((map) => ({ ...map, decisions: [] }));
 
-		// Exact params the wiring passes (src/index.ts ~line 1736)
+		// Exact params the wiring passes (src/index.ts Task post-hook)
 		const wiringParams: PostAgentUpdateParams = {
 			task_id: '4.2',
 			agent_role: 'coder',
@@ -130,6 +131,7 @@ describe('post-agent-update wiring smoke tests (Task 4.2)', () => {
 			implementation_summary: 'x'.repeat(500), // wired to agentOutput.slice(0, 500)
 			task_goal: '', // wiring passes empty string
 			final_status: 'completed', // wiring always passes 'completed'
+			decisions: [], // wired to extractContextDecisionsFromContextMd (#3016)
 			directory: '/fake',
 		};
 
@@ -339,6 +341,7 @@ describe('post-agent-update wiring smoke tests (Task 4.2)', () => {
 		// - implementation_summary: agentOutput.slice(0, 500)
 		// - task_goal: '' (wiring has no goal)
 		// - final_status: 'completed' (wiring always passes 'completed')
+		// - decisions: extractContextDecisionsFromContextMd(bootstrapRoot, {...})
 		// - directory: ctx.directory (injected by createSwarmTool)
 		const agentOutput =
 			'This is a simulated long agent output that gets truncated to 500 characters by the wiring in src/index.ts using agentOutput.slice(0, 500). '.repeat(
@@ -353,6 +356,7 @@ describe('post-agent-update wiring smoke tests (Task 4.2)', () => {
 			implementation_summary: truncatedSummary,
 			task_goal: '',
 			final_status: 'completed',
+			decisions: [], // wired to extractContextDecisionsFromContextMd (#3016)
 			directory: '/fake',
 		});
 

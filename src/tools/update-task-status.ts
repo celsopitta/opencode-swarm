@@ -71,6 +71,7 @@ import {
 } from '../utils/project-boundary';
 import { validateTaskIdFormat as _validateTaskIdFormat } from '../validation/task-id';
 import { recoverCoderSettlement } from '../workflow/coder-settlement.js';
+import { applySessionWorkflowView } from '../workflow/session-view.js';
 import {
 	recoverPreparedTaskRepair,
 	recoverPreparedTaskRepairUnderPlanLock,
@@ -134,11 +135,11 @@ function syncCallerWorkflowFromEvidence(
 	if (!sessionId) return;
 	const callerSession = ensureAgentSession(sessionId);
 	const workflow = getTaskWorkflowSnapshot(evidence);
-	callerSession.taskWorkflowStates.set(taskId, workflow.state);
-	callerSession.stageBCompletion?.delete(taskId);
-	callerSession.taskCouncilApproved?.delete(taskId);
-	callerSession.taskCouncilWorkflowGeneration?.delete(taskId);
-	updateTaskWorkflowCache(callerSession, taskId, workflow);
+	// Unconditional by design: these legs run right after the same call
+	// recovered the durable evidence, so the snapshot IS the just-written
+	// authority (the Stage A recovery writers' predicate lives in
+	// workflow/session-view.ts — issue #3043).
+	applySessionWorkflowView(callerSession, taskId, workflow);
 }
 
 async function hasPreparedWorkflowWal(

@@ -38,7 +38,7 @@ function agents(): Record<string, AgentDefinition> {
 		},
 		Standard_coder: {
 			name: 'Standard_coder',
-			config: { model: 'opencode/minimax-m2.5-free' },
+			config: { model: 'opencode/nemotron-3-ultra-free' },
 		},
 		Standard_reviewer: {
 			name: 'Standard_reviewer',

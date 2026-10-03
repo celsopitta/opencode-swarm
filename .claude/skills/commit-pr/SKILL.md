@@ -187,6 +187,7 @@ bun run scripts/check-vacuous-assertions.ts
 bun run check:pending-fragment
 bun run check:gate-portability
 bun run check:bare-spawn
+bun run scripts/check-config-consumption.ts
 bun run check:test-tmpdir
 bun run check:bash-portability
 bun run check:error-channel-discard

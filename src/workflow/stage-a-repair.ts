@@ -9,12 +9,18 @@ import {
 } from '../gate-evidence.js';
 import { validateSwarmPath } from '../hooks/utils.js';
 import { sanitizeDiagnosticText } from '../scope/path-identity.js';
+import { getAgentSession } from '../state.js';
 import * as logger from '../utils/logger.js';
 import { isStrictTaskId } from '../validation/task-id.js';
 import {
 	type CoderSettlementWalState,
 	listCoderSettlementWalStates,
 } from './coder-settlement.js';
+import {
+	applySessionWorkflowView,
+	isStageARecoveredState,
+	shouldRefreshStageARecoveryView,
+} from './session-view.js';
 import {
 	classifyEvidenceRecoveryTask,
 	type TaskRecoveryStatus,
@@ -456,9 +462,20 @@ export async function scanWedgedStageA(
  */
 export async function repairWedgedStageA(
 	directory: string,
-	options?: { taskIds?: string[] },
+	options?: { taskIds?: string[]; sessionId?: string },
 ): Promise<StageARepairResult> {
 	const requested = options?.taskIds;
+	// Issue #3043: when invoked from a session context (/swarm recover), this
+	// writer refreshes THAT session's in-memory workflow view alongside its
+	// durable writes — otherwise a blocked-start repair leaves the invoking
+	// session's map at `blocked` and every later Stage B verdict in it is
+	// silently skipped (the #3032 split-brain, blocked-start arm). Resolved
+	// with the NON-creating lookup: an unknown session id (including the CLI's
+	// empty dispatch shape) skips the refresh rather than materializing an
+	// 'unknown' session.
+	const refreshSession = options?.sessionId
+		? getAgentSession(options.sessionId)
+		: undefined;
 	const { selected, truncated } = await enumerateStageACandidates(
 		directory,
 		requested,
@@ -472,6 +489,27 @@ export async function repairWedgedStageA(
 		try {
 			const scan = await scanStageATask(directory, taskId, walStates);
 			if (scan.kind === 'not_wedged') {
+				// Issue #3043 skip-path extension: "not wedged" because Stage A
+				// is ALREADY recorded durably still leaves the invoking
+				// session's view potentially wedged (e.g. blocked). One bounded
+				// evidence re-read; the band is re-checked on the RE-READ
+				// snapshot so a concurrent rotation between scan and re-read
+				// cannot apply a below-pre_check_passed view.
+				if (refreshSession && isStageARecoveredState(scan.state)) {
+					const snapshot = getTaskWorkflowSnapshot(
+						await readTaskEvidence(directory, taskId),
+					);
+					if (
+						snapshot.authoritative &&
+						isStageARecoveredState(snapshot.state) &&
+						shouldRefreshStageARecoveryView(
+							refreshSession.taskWorkflowStates.get(taskId),
+							snapshot.state,
+						)
+					) {
+						applySessionWorkflowView(refreshSession, taskId, snapshot);
+					}
+				}
 				results.push({
 					taskId,
 					outcome: 'skipped_not_wedged',
@@ -488,18 +526,31 @@ export async function repairWedgedStageA(
 				continue;
 			}
 			const transitionId = `stage-a-repair:${taskId}:${scan.generation}`;
-			const { duplicated } = await transitionTaskWorkflowEvidenceWithStatus(
-				directory,
-				taskId,
-				{
+			const { evidence: updatedEvidence, duplicated } =
+				await transitionTaskWorkflowEvidenceWithStatus(directory, taskId, {
 					type: 'stage_a_passed',
 					...(scan.mode === 'settlement_wedge'
 						? { settlementRecovery: true as const }
 						: {}),
 					expectedGeneration: scan.generation,
 					transitionId,
-				},
-			);
+				});
+			// Issue #3043: refresh the invoking session's view from the
+			// transition result's OWN evidence snapshot — in both the fresh
+			// and duplicated cases (durable is the authority either way; the
+			// scan snapshot is never used here).
+			if (refreshSession) {
+				const snapshot = getTaskWorkflowSnapshot(updatedEvidence);
+				if (
+					isStageARecoveredState(snapshot.state) &&
+					shouldRefreshStageARecoveryView(
+						refreshSession.taskWorkflowStates.get(taskId),
+						snapshot.state,
+					)
+				) {
+					applySessionWorkflowView(refreshSession, taskId, snapshot);
+				}
+			}
 			// A concurrent same-generation repair (or any writer that recorded
 			// the identical transition first) makes this write a duplicate
 			// no-op detected inside the evidence lock. Skip the audit append so

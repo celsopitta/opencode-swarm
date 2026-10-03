@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import packageJson from '../../package.json' with { type: 'json' };
-import { DEFAULT_MODELS } from './constants';
+import { DEFAULT_AGENT_CONFIGS, DEFAULT_MODELS } from './constants';
 
 /**
  * Absolute `$schema` reference written into config files this plugin authors
@@ -39,7 +39,11 @@ export function writeSwarmConfigExampleIfNew(projectDirectory: string): void {
 						name,
 						{
 							model,
-							fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+							// #3022: derived from the coder chain instead of a
+							// hardcoded duplicate (the literal rotted with the roster).
+							fallback_models: DEFAULT_AGENT_CONFIGS.coder?.fallback_models ?? [
+								'opencode/big-pickle',
+							],
 						},
 					]),
 			),

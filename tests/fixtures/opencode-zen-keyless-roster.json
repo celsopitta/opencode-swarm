@@ -1,0 +1,46 @@
+{
+	"_meta": {
+		"capturedAt": "2026-10-02",
+		"method": "live keyless probe on a clean node:24-slim docker container with @opencode/cli 2.0.21: `opencode run -m opencode/<id> -- \"Reply with exactly: OK\"` per candidate id (no API key; the keyless gate is narrower than the https://opencode.ai/zen/v1/models roster — 12 -free ids there, only 7 keyless plus non-suffixed big-pickle)",
+		"evidence": ".agents/issue-traces/3022-default-swarm-models-unavailable/02-reproduction.md R3 (issue #3022)",
+		"refreshProcedure": "Re-run the per-id probe matrix for the ids in `models` plus any new zen -free ids and current defaults (`opencode run -m opencode/<id> -- \"Reply with exactly: OK\"`; a failure prints `Error: Model unavailable: <id>` — the CLI still exits 0, so match text, not exit codes). Update `models` (and move dropped ids into `rejected`). tests/unit/config/default-models-roster-guard.test.ts then fails until src/config/constants.ts is rotated onto the new roster — that failure is the guard working.",
+		"guard": "tests/unit/config/default-models-roster-guard.test.ts asserts every DEFAULT_MODELS value and every DEFAULT_AGENT_CONFIGS model + fallback_models entry is in `models`"
+	},
+	"models": [
+		"opencode/big-pickle",
+		"opencode/longcat-2.5-preview-free",
+		"opencode/nemotron-3-ultra-free",
+		"opencode/space-bunny-free",
+		"opencode/mimo-v2.6-flash-free",
+		"opencode/fledge-alpha-free",
+		"opencode/nemotron-3.5-lightning-free",
+		"opencode/muse-spark-1.3-contributor-free"
+	],
+	"rejected": [
+		{
+			"id": "opencode/minimax-m2.5-free",
+			"reason": "Model unavailable (keyless) — the #3022 coder default at time of filing"
+		},
+		{
+			"id": "opencode/gpt-5-nano",
+			"reason": "Model unavailable (keyless) — the #3022 cheap-tier default at time of filing"
+		},
+		{
+			"id": "opencode/mimo-v2.5-free",
+			"reason": "Model unavailable (keyless)"
+		},
+		{
+			"id": "opencode/deepseek-v4-flash-free",
+			"reason": "Model unavailable (keyless)"
+		},
+		{ "id": "opencode/jev-1.13-free", "reason": "Model unavailable (keyless)" },
+		{
+			"id": "opencode/muse-spark-1.2-contributor-free",
+			"reason": "Model unavailable (keyless)"
+		},
+		{
+			"id": "opencode/ling-3.0-flash-fin-free",
+			"reason": "resolves but upstream endpoint unavailable (Endpoint is unavailable)"
+		}
+	]
+}

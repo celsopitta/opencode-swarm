@@ -81,6 +81,15 @@ export function createEmptyContextMap(): ContextMap {
  * Load the Context Map from `.swarm/context-map.json` in the given directory.
  * Returns `null` if the file doesn't exist or cannot be parsed (corrupt file).
  * Never throws.
+ *
+ * Structural validation (#3016): every field downstream code iterates or
+ * spreads must have the shape the writers produce — `decisions` an array,
+ * `files` and `task_history` non-null non-array objects. Absent keys fail
+ * closed the same way: every in-repo writer (`createEmptyContextMap`,
+ * `saveContextMap`, the append paths) always materializes all three keys, so
+ * a map missing or mis-shaping them is foreign or hand-mangled and is
+ * replaced by a fresh map rather than silently dropped mid-update or
+ * corrupted by spread semantics.
  */
 export function loadContextMap(directory: string): ContextMap | null {
 	const filePath = path.join(directory, '.swarm', 'context-map.json');
@@ -96,7 +105,14 @@ export function loadContextMap(directory: string): ContextMap | null {
 		if (
 			typeof parsed !== 'object' ||
 			parsed === null ||
-			parsed.schema_version !== 1
+			parsed.schema_version !== 1 ||
+			!Array.isArray(parsed.decisions) ||
+			typeof parsed.files !== 'object' ||
+			parsed.files === null ||
+			Array.isArray(parsed.files) ||
+			typeof parsed.task_history !== 'object' ||
+			parsed.task_history === null ||
+			Array.isArray(parsed.task_history)
 		) {
 			return null;
 		}

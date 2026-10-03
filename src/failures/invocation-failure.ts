@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import {
 	extractStatusCode,
+	MODEL_UNAVAILABLE_PATTERN,
 	QUOTA_ERROR_PATTERN,
 	REQUEST_SHAPE_REJECTION_PATTERN,
 	TRANSIENT_MODEL_ERROR_PATTERN,
@@ -511,6 +512,23 @@ export function classifyProviderFailure(
 			source: 'provider',
 			category: 'provider.rate_limit',
 			retryClass: 'retry_same',
+			risk: 'medium',
+			action,
+			display: signal,
+			code,
+			statusCode,
+		});
+	}
+	// Issue #3022: `Model unavailable: <id>` (OpenCode v2 SessionRunnerModel.
+	// ModelUnavailableError / provider.no-route). The requested model id does
+	// not exist on the provider, so a same-model retry can never succeed —
+	// advance to the next fallback_models entry instead. Checked BEFORE the
+	// generic transient branch (which would classify it retry_same).
+	if (MODEL_UNAVAILABLE_PATTERN.test(signal)) {
+		return buildRecord({
+			source: 'provider',
+			category: 'provider.unavailable',
+			retryClass: 'retry_fallback',
 			risk: 'medium',
 			action,
 			display: signal,

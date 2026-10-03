@@ -85,6 +85,14 @@ export interface TaskModelRouteAdvanceResult {
 	accepted: boolean;
 	exhausted: boolean;
 	fallbackIndex: number;
+	/**
+	 * The normalized chain's model string for the advanced entry (#3029 review
+	 * F-003). `fallbackIndex` counts positions in `normalizeModelChain` output
+	 * (deduped, parse-filtered), so indexing the RAW fallback list by it can
+	 * mismap when a fallback duplicates the primary or fails to parse. Always
+	 * apply `modelString` when present.
+	 */
+	modelString?: string;
 	generation: number;
 	scope: ScopedModelOverrideKey;
 	route?: PendingTaskModelRouteSnapshotEntry;
@@ -258,6 +266,7 @@ export function advancePendingTaskModelRoute(
 		accepted: advanced.accepted,
 		exhausted: advanced.selection.exhausted,
 		fallbackIndex: advanced.selection.fallbackIndex,
+		modelString: advanced.selection.modelString,
 		generation: advanced.selection.generation,
 		scope: routeScope(route),
 		route: { ...route },

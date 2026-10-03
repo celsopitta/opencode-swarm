@@ -96,8 +96,10 @@ describe('Critic Agent Registration', () => {
 			expect(DEFAULT_MODELS).toHaveProperty('critic_sounding_board');
 		});
 
-		test('critic_sounding_board uses gpt-5-nano model', () => {
-			expect(DEFAULT_MODELS.critic_sounding_board).toBe('opencode/gpt-5-nano');
+		test('critic_sounding_board uses the cheap-tier free model (#3022 rotation)', () => {
+			expect(DEFAULT_MODELS.critic_sounding_board).toBe(
+				'opencode/mimo-v2.6-flash-free',
+			);
 		});
 	});
 

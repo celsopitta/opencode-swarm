@@ -28,6 +28,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { CONFIG_CONSUMERS, type TopLevelConfigKey } from '../src/config/consumers';
 import { PluginConfigSchema } from '../src/config/schema';
 
 export const CONFIG_SCHEMA_RELATIVE_PATH = 'opencode-swarm.schema.json';
@@ -201,7 +202,23 @@ export function escapeCell(text: string): string {
 }
 
 /**
- * Build the generated docs section (including markers) for
+ * The "Consumed by" cell for a top-level key, emitted from CONFIG_CONSUMERS
+ * (issue #2904) so the column can never drift from the declaration the
+ * config-consumption gate verifies. Inert keys render `(inert)`; consumed keys
+ * render their first citation plus a `(+N)` marker when more exist.
+ */
+function consumedByCell(key: string): string {
+	const declaration = CONFIG_CONSUMERS[key as TopLevelConfigKey];
+	if (!declaration) return '';
+	if ('inert' in declaration) return '(inert)';
+	const { consumers } = declaration;
+	if (consumers.length === 0) return '';
+	const first = escapeCell(consumers[0] ?? '');
+	return consumers.length > 1 ? `${first} (+${consumers.length - 1})` : first;
+}
+
+/**
+ * Build the generated "Top-level configuration keys" section embedded into
  * docs/configuration.md. Derived from the same schema walk as the JSON
  * Schema so the two artifacts cannot disagree.
  */
@@ -217,13 +234,13 @@ export function buildConfigDocsSection(): string {
 		'Generated from `PluginConfigSchema` (`src/config/schema.ts`) - do not edit inside the markers. Regenerate with `bun run scripts/generate-config-schema.ts`. See also the topic sections below and the shipped JSON Schema (`opencode-swarm.schema.json`, referenced via `$schema` for editor validation).',
 	);
 	lines.push('');
-	lines.push('| Key | Type | Default | Description |');
-	lines.push('| --- | ---- | ------- | ----------- |');
+	lines.push('| Key | Type | Default | Description | Consumed by |');
+	lines.push('| --- | ---- | ------- | ----------- | ----------- |');
 	for (const [key, prop] of Object.entries(properties)) {
 		lines.push(
 			`| \`${key}\` | ${summarizeType(prop)} | ${summarizeDefault(
 				prop.default,
-			)} | ${escapeCell(prop.description ?? '')} |`,
+			)} | ${escapeCell(prop.description ?? '')} | ${consumedByCell(key)} |`,
 		);
 	}
 	lines.push('');

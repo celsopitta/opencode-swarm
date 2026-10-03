@@ -526,6 +526,76 @@ export async function checkSingleModelResolution(
 	return 'ok';
 }
 
+/**
+ * Verified keyless opencode zen roster (issue #3022, captured 2026-10-02 on a
+ * clean @opencode/cli 2.0.21 container via `opencode run -m opencode/<id>`).
+ * Cross-pinned against tests/fixtures/opencode-zen-keyless-roster.json by
+ * tests/unit/config/default-models-roster-guard.test.ts. REFRESH PROCEDURE:
+ * re-run the per-id probe matrix (failures print `Model unavailable: <id>`
+ * while exiting 0 — match text, not exit codes), update BOTH this list and the
+ * fixture, then rotate src/config/constants.ts; the guard test failing after a
+ * refresh is the mechanism working.
+ */
+export const VERIFIED_KEYLESS_MODEL_ROSTER: readonly string[] = [
+	'opencode/big-pickle',
+	'opencode/longcat-2.5-preview-free',
+	'opencode/nemotron-3-ultra-free',
+	'opencode/space-bunny-free',
+	'opencode/mimo-v2.6-flash-free',
+	'opencode/fledge-alpha-free',
+	'opencode/nemotron-3.5-lightning-free',
+	'opencode/muse-spark-1.3-contributor-free',
+];
+
+/**
+ * Issue #3022 (AC4): pure, clientless roster check. Given the configured agent
+ * models (a `string[]` of model ids or a DEFAULT_AGENT_CONFIGS-shaped record of
+ * `{model, fallback_models}` entries) and a roster of known-good ids, returns
+ * one bounded warning per configured id that is NOT in the roster (deduped),
+ * and NO warnings when every id resolves. No I/O, no network — safe to run on
+ * hosts without an OpencodeClient (OpenCode v2 startup) where the
+ * catalog-backed {@link runModelPreflight} degrades to all-`unknown`.
+ */
+export function collectModelRosterWarnings(
+	models:
+		| readonly string[]
+		| Record<string, { model?: string; fallback_models?: string[] }>,
+	roster: readonly string[],
+): string[] {
+	const known = new Set(roster);
+	const toCheck: string[] = [];
+	if (Array.isArray(models)) {
+		toCheck.push(...models);
+	} else if (models && typeof models === 'object') {
+		for (const entry of Object.values(models)) {
+			if (!entry || typeof entry !== 'object') continue;
+			if (typeof entry.model === 'string' && entry.model.length > 0) {
+				toCheck.push(entry.model);
+			}
+			for (const fb of entry.fallback_models ?? []) {
+				if (typeof fb === 'string' && fb.length > 0) toCheck.push(fb);
+			}
+		}
+	}
+	const seen = new Set<string>();
+	const warnings: string[] = [];
+	for (const model of toCheck) {
+		if (seen.has(model)) continue;
+		seen.add(model);
+		// The verified roster covers ONLY the opencode zen provider (#3022
+		// review round 1): other providers (anthropic/openai/xai/...) resolve
+		// through their own catalogs and are out of scope — warning about them
+		// would claim a hard failure that never happens.
+		if (!model.startsWith('opencode/')) continue;
+		if (!known.has(model)) {
+			warnings.push(
+				`[opencode-swarm] model preflight: ${model} is not in the verified opencode zen keyless roster (tests/fixtures/opencode-zen-keyless-roster.json); if this is a zen free-tier id, delegation will fail with "Model unavailable" until the roster/constants are refreshed.`,
+			);
+		}
+	}
+	return warnings;
+}
+
 export const _internals = {
 	/** Injectable seam for the SDK catalog call (tests substitute this). */
 	providerList: async (client: OpencodeClient) => {

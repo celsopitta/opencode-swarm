@@ -10,6 +10,8 @@
  * See issue #1104, FR-003 and FR-004.
  */
 
+import type { DecisionEntry } from './context-map';
+
 /**
  * Reason a capsule was generated for a delegated agent.
  * Named `CapsuleDelegationReason` to avoid collision with `DelegationReason`
@@ -68,6 +70,11 @@ export interface RoleProfile {
 	include_coverage: boolean;
 	/** Whether to include claimed fix or implementation details */
 	include_claims: boolean;
+	/**
+	 * Whether to include the decisions log from the context map
+	 * (relevant for critic — design-level context, #3016).
+	 */
+	include_decisions: boolean;
 }
 
 /**
@@ -123,6 +130,12 @@ export interface ContextCapsule {
 	review_checklist?: string[];
 	/** Coverage targets, included for test_engineer capsules */
 	coverage_targets?: string[];
+	/**
+	 * Context-map decisions surfaced in the capsule content, included for
+	 * critic capsules (#3016). Optional: absent when the role profile does
+	 * not include decisions or the map holds none.
+	 */
+	decisions?: DecisionEntry[];
 	/** Per-file read policy: which summaries to trust vs which files to read */
 	read_policy: ReadPolicyEntry[];
 	/** The full markdown content of the capsule */

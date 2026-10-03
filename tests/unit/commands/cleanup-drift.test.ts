@@ -329,8 +329,13 @@ test('singleton preservation drift guard (FR-020) — new singleton in swarmStat
 	// system-enhancer on the next budget report, so both must reset to 0 rather
 	// than survive a `/swarm close` (issue #1619). `liveContextWindows` is a Map
 	// and is `.clear()`ed rather than replaced, so it is not a cleared-sentinel
-	// value and does not appear here.
-	const expectedClearedOutside = ['pendingEvents'];
+	// value and does not appear here. `pendingDispatchAuthorizations` (#3036) is
+	// a per-dispatch runtime array — an empty array after reset is the cleared
+	// sentinel, and like `pendingEvents` it must reset rather than survive.
+	const expectedClearedOutside = [
+		'pendingEvents',
+		'pendingDispatchAuthorizations',
+	];
 	if (clearedInPreserve.length > 0) {
 		throw new Error(
 			`DRIFT: preserved singleton(s) were cleared after resetSwarmStatePreservingSingletons: ${clearedInPreserve.join(', ')}`,

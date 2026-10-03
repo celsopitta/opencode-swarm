@@ -1,4 +1,57 @@
 /**
+ * #3022 AC4 (deferred, per the C6 naming convention): clientless startup model
+ * preflight for v2 hosts. The catalog-backed `runModelPreflight` requires an
+ * OpencodeClient the v2 Context does not carry, so validate the effective
+ * enabled-role models against the checked-in verified keyless roster instead
+ * and surface a bounded operational warning per non-roster id. Fail-open on
+ * every error; bounded local reads only (no network).
+ */
+async function deferredV2StartupModelPreflight(
+	directory: string,
+): Promise<void> {
+	try {
+		const loaded = await withTimeout(
+			Promise.resolve(loadPluginConfigWithMeta(directory)),
+			2_000,
+			new Error(
+				'[opencode-swarm] v2: startup preflight config read exceeded budget',
+			),
+		);
+		const entries = collectEnabledAgentModels(loaded?.config);
+		const models = entries
+			.map((entry) => entry.model)
+			.filter(
+				(model): model is string =>
+					typeof model === 'string' && model.length > 0,
+			);
+		const quiet = loaded?.config?.quiet === true;
+		for (const warning of collectModelRosterWarnings(
+			models,
+			VERIFIED_KEYLESS_MODEL_ROSTER,
+		)) {
+			// Two surfaces, mirroring the v1 preflight (src/index.ts ~1625):
+			// 1. addDeferredWarning — the in-process advisory buffer /swarm
+			//    diagnose reads. Live hosts run plugins in the background
+			//    service process whose console the CLI does not relay (D3/AC4
+			//    live probe, 2026-10-02), so the buffer is the channel the
+			//    operator can actually reach; warn() alone would be
+			//    OPENCODE_SWARM_DEBUG-gated and invisible in production.
+			// 2. console.warn on stderr for foreground/standalone service runs,
+			//    quiet-gated exactly like the v1 preflight's console.warn.
+			addDeferredWarning(warning);
+			if (!quiet) {
+				// biome-ignore lint/suspicious/noConsole: #3022 AC4 startup roster warning must be visible without OPENCODE_SWARM_DEBUG (same rationale as the index.ts version banner), gated on config.quiet like the v1 preflight
+				console.warn(warning);
+			}
+		}
+	} catch (err) {
+		log('v2 startup model preflight failed (non-fatal)', {
+			error: err instanceof Error ? err.message : String(err),
+		});
+	}
+}
+
+/**
  * OpenCode 2 (v2 plugin API) setup entrypoint — issue #3004 / #2910.
  *
  * The v2 host validates the plugin's default export against
@@ -35,6 +88,13 @@
  */
 
 import { z } from 'zod';
+import { loadPluginConfigWithMeta } from '../../config/loader';
+import {
+	collectEnabledAgentModels,
+	collectModelRosterWarnings,
+	VERIFIED_KEYLESS_MODEL_ROSTER,
+} from '../../services/model-preflight';
+import { addDeferredWarning } from '../../services/warning-buffer';
 import { ensureAgentSession, swarmState } from '../../state';
 import { log } from '../../utils';
 import { resolveProjectRootDecision } from '../../utils/project-boundary';
@@ -43,6 +103,10 @@ import { registerV2AgentsAndCommands } from './agents-commands';
 import { startDeferredEventPump } from './events';
 import { registerV2ContextHook } from './guidance';
 import { registerV2SessionHooks, registerV2ToolHooks } from './hooks';
+import {
+	clearV2AgentTransformSurface,
+	registerV2AgentTransformSurface,
+} from './model-apply';
 import { registerV2Tools } from './tools';
 import type { V1HooksSubset, V2PluginContext, V2Registration } from './types';
 
@@ -184,6 +248,26 @@ export async function openCodeSwarmV2Setup(
 	const stopPump = startDeferredEventPump(ctx, hooks);
 	state.pumpStop = stopPump;
 
+	// #3022 D2: remember the agent transform surface for runtime model
+	// rewrites (fallback advance application — the v2-native equivalent of the
+	// v1 output.message.model write).
+	registerV2AgentTransformSurface(ctx);
+
+	// #3022 AC4: clientless startup roster preflight — the catalog-backed
+	// preflight is client-only, so on v2 validate the effective models against
+	// the checked-in verified roster instead. Every failure mode is a
+	// non-fatal warning. Run INLINE at the tail of setup: live 2.0.21 probing
+	// showed the host's plugin realm does NOT execute post-setup timer
+	// callbacks, so a setTimeout-deferred run never fired; this is a local
+	// two-file JSON read (no network, ~17 ms warm), within invariant 1's
+	// fast-init allowance. The withTimeout wrap satisfies the C6 scan's
+	// same-line bound requirement for awaits inside openCodeSwarmV2Setup.
+	await withTimeout(
+		deferredV2StartupModelPreflight(directory),
+		V2_SETUP_TIMEOUT_MS,
+		new Error('[opencode-swarm] v2: startup model preflight exceeded budget'),
+	);
+
 	state.disposeV1 =
 		typeof hooks.dispose === 'function' ? hooks.dispose : undefined;
 
@@ -194,6 +278,7 @@ export async function openCodeSwarmV2Setup(
 
 	return async function cleanupV2Plugin(): Promise<void> {
 		if (typeof state.pumpStop === 'function') state.pumpStop();
+		clearV2AgentTransformSurface();
 		for (const registration of state.registrations) {
 			try {
 				await withTimeout(

@@ -44,6 +44,7 @@ import {
 	type ParsedCriticResponse,
 	parseCriticResponseFields,
 } from './critic-response-parser';
+import { fullAutoOversightEvidenceFileName } from './evidence-names';
 import {
 	incrementOversightFailureCounter,
 	loadFullAutoRunState,
@@ -53,13 +54,6 @@ import {
 	resetOversightFailureCounter,
 	terminateFullAutoRun,
 } from './state';
-
-// In-memory shadow of the durable oversight sequence counter. Maintained
-// only so tests can reset it via `_internals.resetSequence()`; production
-// reads always go through `nextFullAutoOversightSequence` which consults
-// the durable state file.
-let oversightSequenceCounter = 0;
-void oversightSequenceCounter; // referenced via _internals.resetSequence
 
 export interface FullAutoCriticResult extends ParsedCriticResponse {}
 
@@ -305,7 +299,11 @@ export async function writeFullAutoOversightEvidence(
 			path.posix.join('evidence', String(phase)),
 		);
 		fs.mkdirSync(evidenceDir, { recursive: true });
-		const fileName = `full-auto-${event.oversight_sequence}.json`;
+		// #3011: the filename grammar lives in evidence-names.ts so the
+		// allocator's catch-up scanner (state.ts) cannot drift from it.
+		const fileName = fullAutoOversightEvidenceFileName(
+			event.oversight_sequence,
+		);
 		const filePath = validateSwarmPath(
 			directory,
 			path.posix.join('evidence', String(phase), fileName),
@@ -338,9 +336,6 @@ export async function dispatchFullAutoOversight(
 	// collide after a process restart. The counter is monotonic across
 	// restarts and stored in `.swarm/full-auto-state.json`.
 	const sequence = nextFullAutoOversightSequence(input.directory);
-	// Keep the in-memory counter in sync for any test that resets it via
-	// `_internals.resetSequence()`.
-	oversightSequenceCounter = sequence;
 	const beforeStatus = loadFullAutoRunState(
 		input.directory,
 		input.sessionID,
@@ -874,16 +869,12 @@ export async function dispatchFullAutoOversight(
  * Test-only DI seam.
  */
 export const _internals: {
-	resetSequence: () => void;
 	now: () => number;
 	sleep: typeof sleep;
 	setTimer: typeof setTimeout;
 	clearTimer: typeof clearTimeout;
 	teardownEphemeralSession: typeof teardownEphemeralSession;
 } = {
-	resetSequence: () => {
-		oversightSequenceCounter = 0;
-	},
 	now: () => performance.now(),
 	sleep,
 	setTimer: setTimeout,

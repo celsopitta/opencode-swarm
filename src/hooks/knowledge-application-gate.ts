@@ -389,8 +389,17 @@ export async function knowledgeApplicationGateBefore(
 					})),
 				});
 				if (!committed.ok || committed.rejected.length > 0) {
+					// Issue #3036: name the batch's own rejection reasons so a
+					// wrong_session mismatch is not a bare failure (the pins on
+					// this message are prefix-only).
 					throw new Error(
-						'KNOWLEDGE_ENFORCE_GATE_DENY: could not durably record staleness release',
+						`KNOWLEDGE_ENFORCE_GATE_DENY: could not durably record staleness release${
+							committed.ok && committed.rejected.length > 0
+								? ` (${committed.rejected
+										.map((item) => `${item.entry_id}: ${item.reason}`)
+										.join('; ')})`
+								: ''
+						}`,
 					);
 				}
 			}
@@ -472,8 +481,16 @@ export async function knowledgeApplicationGateBefore(
 					})),
 				});
 				if (!committed.ok || committed.rejected.length > 0) {
+					// Issue #3036: name the batch's own rejection reasons (see the
+					// staleness-release sibling above).
 					throw new Error(
-						'KNOWLEDGE_ENFORCE_GATE_DENY: could not durably record denial-limit release',
+						`KNOWLEDGE_ENFORCE_GATE_DENY: could not durably record denial-limit release${
+							committed.ok && committed.rejected.length > 0
+								? ` (${committed.rejected
+										.map((item) => `${item.entry_id}: ${item.reason}`)
+										.join('; ')})`
+								: ''
+						}`,
 					);
 				}
 			}

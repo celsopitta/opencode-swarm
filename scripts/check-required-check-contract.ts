@@ -1209,7 +1209,7 @@ export function collectRequiredCheckContract(
 	return final;
 }
 
-interface TrustedGitHubContext {
+export interface TrustedGitHubContext {
 	event: string;
 	actor: string;
 	repository: string;
@@ -1270,11 +1270,37 @@ function trustedGitHubContext(root: string): TrustedGitHubContext {
 	};
 }
 
-function changedFilesForGuard(root: string, context: TrustedGitHubContext): string[] {
+/**
+ * Resolve the PR-side changed files for the release-owner guard.
+ *
+ * The diff base is the merge-base of the trusted base/head range, not the raw
+ * base SHA. GitHub's `pull_request.base.sha` is the CURRENT base-branch tip at
+ * event time (a moving target), so a two-dot diff against it also contains the
+ * reversed diff of every commit main gained after the PR forked — including
+ * release-please owner-file bumps, which would accuse a clean PR of editing
+ * files it never touched (issue #2997; same rationale as the BOT-H1 comment in
+ * scripts/check-pending-fragment.ts). Merge-group ranges are constructed on
+ * top of their declared base_sha, so the merge-base must equal it; a mismatch
+ * would mean GitHub changed that construction, and the guard fails closed
+ * rather than silently drifting from the declared-base range.
+ */
+export function changedFilesForGuard(root: string, context: TrustedGitHubContext): string[] {
 	if (context.event === 'merge_group' && context.baseSha === 'origin/main') {
 		throw new Error('merge_group owner inspection requires the declared base_sha');
 	}
-	return changedFilesFromGitResult(runGit(releaseOwnerDiffArgs(context.baseSha, context.headSha), root));
+	const mergeBase = runGit(['merge-base', '--', context.baseSha, context.headSha], root);
+	const mergeBaseSha = mergeBase.stdout.trim();
+	if (mergeBase.exitCode !== 0 || !isCommitSha(mergeBaseSha)) {
+		throw new Error(
+			`cannot resolve merge-base of ${context.baseSha}..${context.headSha}; release-owner guard fails closed`,
+		);
+	}
+	if (context.event === 'merge_group' && mergeBaseSha.toLowerCase() !== context.baseSha.toLowerCase()) {
+		throw new Error(
+			`merge_group base ${context.baseSha} is not the merge-base of the group head; release-owner guard fails closed`,
+		);
+	}
+	return changedFilesFromGitResult(runGit(releaseOwnerDiffArgs(mergeBaseSha, context.headSha), root));
 }
 
 function headSubject(root: string, head = process.env.GITHUB_SHA || 'HEAD'): string {

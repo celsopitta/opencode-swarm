@@ -12,19 +12,28 @@
  *   ------------------------+-------------------------------------------
  *   session.idle            → { type: 'session.idle', properties }
  *   session.status.updated  → { type: 'session.idle', properties } (state watch)
+ *   session.status          → { type: 'session.status', properties } (type-preserving; #3022)
  *   session.text.delta      → { type: 'message.part.updated', properties }
  *   session.text.ended      → { type: 'message.updated', properties }
  *   session.tool.called     → { type: 'message.part.updated', properties }
  *   session.tool.success    → { type: 'message.updated', properties }
  *   session.tool.failed     → { type: 'message.updated', properties }
  *   session.execution.failed → { type: 'session.error', properties }
+ *   session.error           → { type: 'session.error', properties } (SDK dialect; #3022)
  *   session.deleted / session.created → same-name v1 types
+ *
+ * Payload dialect (#3022 D3 live capture): plugin-stream envelopes carry the
+ * payload under `data` (live 2.0.21 emits `session.execution.failed` with
+ * `data:{sessionID, error:{...}}`); the @opencode-ai/sdk SSE/REST dialect
+ * carries it under `properties` with the error event named `session.error`.
+ * Both names and both payload keys are accepted.
  *
  * Unmapped event types are counted in a bounded debug log, never silently
  * assumed. This module is named deferred-/startDeferred- per the C6 await
  * convention (its awaits live in deferred-named helpers).
  */
 
+import { recordSessionChatAgent } from '../../models/task-model-routing';
 import { log } from '../../utils';
 import { withTimeout } from '../../utils/timeout';
 import type { V1HooksSubset, V2EventEnvelope, V2PluginContext } from './types';
@@ -43,7 +52,12 @@ export function mapV2EventToV1(
 ): MappedEvent | undefined {
 	const type = typeof envelope?.type === 'string' ? envelope.type : undefined;
 	if (type === undefined) return undefined;
-	const data = (envelope as { data?: Record<string, unknown> }).data ?? {};
+	// #3022: live plugin-stream envelopes carry the payload under `data`; the
+	// SDK SSE/REST dialect carries it under `properties`. Accept both.
+	const data =
+		(envelope as { data?: Record<string, unknown> }).data ??
+		(envelope as { properties?: Record<string, unknown> }).properties ??
+		{};
 	const sessionID =
 		typeof data.sessionID === 'string' ? data.sessionID : undefined;
 	switch (type) {
@@ -53,9 +67,23 @@ export function mapV2EventToV1(
 				type: 'session.idle',
 				properties: { ...(sessionID ? { sessionID } : {}), ...data },
 			};
+		case 'session.status':
+			// #3022 plan-critic blocker 1: type-preserving. The v1 handler's
+			// terminalization predicate filters `session.status` on
+			// status === 'idle' or status.type === 'idle'|'error'
+			// (src/index.ts isTerminalSessionEvent), so live `busy`/`retry`
+			// transitions can never terminalize a running session the way a
+			// premature `session.idle` mapping would.
+			return {
+				type: 'session.status',
+				properties: { ...(sessionID ? { sessionID } : {}), ...data },
+			};
+		case 'session.error':
 		case 'session.execution.failed':
 			// v1 consumers key on 'session.error' (the src/index.ts session.error
-			// branch: model-fallback advance, pr-workflow auto-wake).
+			// branch: model-fallback advance, pr-workflow auto-wake). Live hosts
+			// emit 'session.execution.failed' (D3 capture); the SDK dialect
+			// names it 'session.error' — both map here.
 			return {
 				type: 'session.error',
 				properties: { ...(sessionID ? { sessionID } : {}), ...data },
@@ -114,7 +142,31 @@ async function deferredDispatch(
 }
 
 /**
- * Start the detached event pump. Returns a stop function. Named per the C6
+ * Seed v1 session identity from identity-bearing v2 envelopes (issue #3022 D1).
+ *
+ * Live capture (d3/run2.log): `session.created` and `session.agent.selected`
+ * carry `data.agent`. This runs PUMP-SIDE (not as mapper case labels — those
+ * names are in neither the SDK union nor the mapper's legacy allowlist, and
+ * Branch B of the v1 session.error arm resolves identity through
+ * `recordSessionChatAgent`'s map, the same bounded store the v1 chat boundary
+ * writes). Fail-open by construction: non-string fields are ignored.
+ */
+export function seedSessionIdentityFromEnvelope(
+	envelope: V2EventEnvelope,
+): void {
+	const type = typeof envelope?.type === 'string' ? envelope.type : undefined;
+	if (type !== 'session.created' && type !== 'session.agent.selected') return;
+	const payload =
+		(envelope as { data?: Record<string, unknown> }).data ??
+		(envelope as { properties?: Record<string, unknown> }).properties ??
+		{};
+	const sessionID =
+		typeof payload.sessionID === 'string' ? payload.sessionID : undefined;
+	const agent = typeof payload.agent === 'string' ? payload.agent : undefined;
+	if (sessionID && agent) recordSessionChatAgent(sessionID, agent);
+}
+
+/** Start the detached event pump. Returns a stop function. Named per the C6
  * convention (deferred).
  */
 export function startDeferredEventPump(
@@ -152,6 +204,7 @@ export function startDeferredEventPump(
 			}
 			for await (const envelope of iterable as AsyncIterable<V2EventEnvelope>) {
 				if (stopped) break;
+				seedSessionIdentityFromEnvelope(envelope);
 				const mapped = mapV2EventToV1(envelope);
 				if (mapped === undefined) {
 					const t =

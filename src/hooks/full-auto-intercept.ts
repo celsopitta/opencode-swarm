@@ -31,6 +31,7 @@ import {
 import {
 	incrementOversightFailureCounter,
 	loadFullAutoRunState,
+	nextFullAutoOversightSequence,
 	pauseFullAutoRun,
 	recordFullAutoEscalation,
 	recordFullAutoOversight,
@@ -1292,8 +1293,6 @@ async function handleEscalation(
 // best-effort augmentation: failures must not affect legacy behavior.
 // ---------------------------------------------------------------------------
 
-let reactiveOversightSequence = 0;
-
 interface MirrorParams {
 	directory: string;
 	parsed: CriticDispatchResult;
@@ -1315,7 +1314,6 @@ interface MirrorParams {
 }
 
 async function mirrorReactiveVerdictToV2(params: MirrorParams): Promise<void> {
-	reactiveOversightSequence += 1;
 	const triggerSource: V2FullAutoOversightEvent['trigger_source'] =
 		params.escalationType === 'phase_completion'
 			? 'phase_boundary'
@@ -1389,6 +1387,19 @@ async function mirrorReactiveVerdictToV2(params: MirrorParams): Promise<void> {
 		return;
 	}
 
+	// #3011: allocate the sequence from the SAME durable allocator the v1
+	// dispatcher uses (nextFullAutoOversightSequence), not a process-local
+	// counter — a module-level counter re-zeroes on restart and re-issues
+	// sequences 1, 2, … which both duplicated event identity in events.jsonl
+	// and destructively overwrote persisted full-auto-N.json evidence files
+	// (the evidence writer derives its filename from this value). Allocated
+	// AFTER the durable-session skip so a skipped mirror burns no sequence
+	// and performs no state write. The allocator holds the state lock, so
+	// v1 and v2 writers share one collision domain; any allocator failure
+	// (typed lock contention, storage) propagates to the caller's
+	// best-effort try/catch and never affects the legacy path.
+	const oversightSequence = nextFullAutoOversightSequence(params.directory);
+
 	const decision: V2FullAutoOversightEvent['decision'] = (() => {
 		if (
 			params.parsed.escalationNeeded ||
@@ -1429,7 +1440,7 @@ async function mirrorReactiveVerdictToV2(params: MirrorParams): Promise<void> {
 		decision,
 		full_auto_status_before: beforeStatus,
 		full_auto_status_after: beforeStatus,
-		oversight_sequence: reactiveOversightSequence,
+		oversight_sequence: oversightSequence,
 	};
 
 	// React to verdict on durable state.

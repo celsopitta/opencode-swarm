@@ -56,7 +56,7 @@ Most behavior is controlled by `opencode-swarm.json`. Environment variables are 
 ```json
 {
   "agents": {
-    "coder": { "model": "opencode/minimax-m2.5-free" },
+    "coder": { "model": "opencode/nemotron-3-ultra-free" },
     "reviewer": { "model": "opencode/big-pickle" }
   }
 }
@@ -72,92 +72,92 @@ You only need to define the agents you want to override.
 
 Generated from `PluginConfigSchema` (`src/config/schema.ts`) - do not edit inside the markers. Regenerate with `bun run scripts/generate-config-schema.ts`. See also the topic sections below and the shipped JSON Schema (`opencode-swarm.schema.json`, referenced via `$schema` for editor validation).
 
-| Key | Type | Default | Description |
-| --- | ---- | ------- | ----------- |
-| `$schema` | string | — | JSON Schema URL for editor validation/autocomplete of this file (issue #1663). Ignored at runtime; malformed values are ignored too. |
-| `config_format_version` | integer | 1 | Config format version for the migration table. Increment when fields are deprecated. Distinct from knowledge.schema_version. |
-| `preset` | enum(default \| conservative) | — | Defaults profile: "default" applies the governed v8 defaults; "conservative" restores the pre-flip (v7) defaults for every flipped surface (#2504). |
-| `agents` | record<string, object> | — | Per-agent overrides keyed by agent name for the default swarm (e.g. "architect", "coder"). Multi-swarm setups configure agents under swarms.<id>.agents instead. |
-| `default_agent` | string | — | Agent set as the primary mode. Omitted: every generated *_architect is primary. Exact generated name (e.g. "local_architect"): only that agent. Base role name (e.g. "coder"): every generated agent with that base role. Unknown strings warn once and fall back to architect primaries. |
-| `auto_select_architect` | boolean \| string | — | Auto-select the swarm architect for new sessions instead of OpenCode built-ins. Omitted or false: manual selection (omitted behaves as false). true: enable auto-select and disable built-in build/plan agents. "<architect_name>" (e.g. "mega_architect"): enable targeting one architect in multi-swarm setups. |
-| `swarms` | record<string, object> | — | Multiple swarms keyed by swarm ID (no underscores allowed). The first swarm, or one named "default", provides the primary architect. |
-| `max_iterations` | number | 5 | Maximum pipeline iterations per task (1-10). |
-| `pipeline` | object | — | Pipeline stage/model settings. |
-| `phase_complete` | object | — | Phase-completion gate settings. |
-| `qa_retry_limit` | number | 3 | Maximum QA retry rounds per task (1-10). |
-| `execution_mode` | enum(strict \| balanced \| fast) | "balanced" | Performance mode controlling optional hook execution overhead: "strict", "balanced", or "fast". |
-| `inject_phase_reminders` | boolean | true | Inject phase reminder directives during execution. |
-| `hooks` | object | — | Hook subsystem toggles and settings. |
-| `pr_review_resilience` | object (strict) | — | PR review base-wave staged canary/fanout resilience settings. |
-| `review_routing` | object (strict) | — | Semantic review routing receipt enforcement for Stage B (default on; set enforce_receipts=false only as a one-release rollback). |
-| `lane_liveness_watchdog` | object (strict) | — | Lane liveness watchdog: execution deadline and stall escalation for PR workflow lanes. |
-| `dispatch_protection` | object (strict) | — | Dispatch protection: action-local spawn-failure circuit breaker and token-bucket rate limiting for native task delegations. |
-| `pr_review_legacy_transcript_compatibility` | boolean | — | Deprecated migration-only opt-in for transcript-row PR-review base and micro discovery lanes. |
-| `gates` | object | — | Quality gate configuration (v6.9 anti-slop features). |
-| `context_budget` | object | — | Context budget thresholds. |
-| `pricing` | object | — | Token/cost estimation fallback table. Provider-reported cost wins when present; entries only estimate from usage tokens when reports omit cost. |
-| `guardrails` | object | — | Loop containment and safety guardrails: tool-call caps, denial tracking, destructive-command blocking, shell audit. |
-| `watchdog` | object | — | Scope-guard and delegation-ledger watchdog settings. |
-| `self_review` | object | — | Advisory self-review after coder delegation. |
-| `auto_review` | object | — | Opt-in execution-diff review by the reviewer model in a fresh ephemeral session at task/phase boundaries. |
-| `tool_filter` | object | — | Controls which plugin tools each agent is allowed to use; enforced through host-side per-agent permission denies (issue #2528). enabled: false lifts the plugin-tool allow-list but keeps each role's read-only write-family floor. |
-| `authority` | object | — | Per-agent file write authority rules. |
-| `plan_cursor` | object | — | Compressed plan summary injection settings. |
-| `context_map` | object | — | Context Map (issue #1104, FR-006) — opt-in. |
-| `repo_graph` | object | {} | Repository dependency-graph settings (builder excludes, incremental refresh). Nested defaults materialize when the whole section is omitted. |
-| `evidence` | object | — | Evidence retention and storage settings. |
-| `summaries` | object | — | Summary generation settings. |
-| `retention` | object | {} | Retention sweep settings (issue #2483). |
-| `review_passes` | object | — | Dual-pass security review settings. |
-| `adversarial_detection` | object | — | Same-model adversarial checker detection settings. |
-| `adversarial_testing` | object | { … } | Cross-model adversarial testing settings. |
-| `integration_analysis` | object | — | Integration analysis settings. |
-| `docs` | object | — | Documentation synthesizer (docs agent) settings. |
-| `design_docs` | object | — | Structured design-doc generation (issue #1080, docs_design agent) — opt-in. |
-| `speckit_checkoff` | object | — | Spec-Kit tasks.md check-off round trip (issue #2501) — opt-in, never on by default. |
-| `git` | object | — | Git executable resolution override (issue #2236 hardening). |
-| `ui_review` | object | — | UI/UX review (designer agent) settings. |
-| `compaction_advisory` | object | — | Compaction advisory settings. |
-| `lint` | object | — | Lint gate settings. |
-| `secretscan` | object | — | Secret scanning settings. |
-| `checkpoint` | object (strict) | — | Checkpoint settings. |
-| `apply_patch` | object (strict) | — | Apply-patch opt-in fuzzy matching fallback (issue #1718). |
-| `automation` | object | — | Background automation mode and per-feature toggles (v6.7 background-first rollout). |
-| `knowledge` | object | — | Two-tier cross-project knowledge base (v6.17). |
-| `memory` | object | — | Swarm memory substrate — disabled by default so existing flows are unchanged. |
-| `forge` | object | — | Forge provider (GitHub/GitLab) selection for PR/issue workflows (issue #2733). Ambiguous git remotes (mixed providers, unrecognized self-hosted hosts, or no remote) fail closed and require an explicit selection; forge.base_url passes through the same HTTPS-only / non-private / ASCII-host guards as every forge URL and is never a trust whitelist; combining base_url with provider "github" is rejected as a configuration conflict. |
-| `observability` | object | — | Observability options — remote OTLP/OpenInference export is opt-in and disabled by default (issue #2485). |
-| `learning` | object | — | Learning subsystem: real-time admission, PRM persistence, dedup sweep (issue #1821). |
-| `consensus` | object | — | Consensus mining over completed run evidence (issue #1821). |
-| `curator` | object | — | Phase context consolidation and drift detection. |
-| `architectural_supervision` | object | — | Hierarchical summary review (issue #893). |
-| `knowledge_application` | object | — | Knowledge-application contract (v2): warn or enforce modes, ack tracking. |
-| `skillPropagation` | object | — | Skill propagation gate/injection settings. |
-| `skill_improver` | object | — | Low-frequency, expensive-model skill improvement loop (issue #629, v2). |
-| `harness_evolution` | object (strict) | — | Declarative, non-executing HarnessOpt mutation policy (issue #1825). |
-| `harness_opt` | object (strict) | — | Governed HarnessOpt optimization capstone (issue #2503). Disabled by default; /swarm harness-opt run requires enabled: true plus --confirm. |
-| `spec_writer` | object | — | Spec writer agent (v2) — independent model for .swarm/spec.md authorship. |
-| `tool_output` | object | — | Tool output truncation settings (enable/disable, max lines, per-tool overrides). |
-| `slop_detector` | object | — | Slop detector settings (v6.29). |
-| `todo_gate` | object | — | TODO gate (v6.32): warn or block on new high-priority TODOs (FIXME/HACK/XXX). |
-| `incremental_verify` | object | — | Incremental verification settings (v6.29). |
-| `compaction_service` | object | — | Compaction service settings (v6.29). |
-| `prm` | object | — | PRM (Process Remediation Manager) settings. |
-| `council` | object (strict) | — | Work Complete Council — parallel four-member verification gate, off by default. |
-| `parallelization` | object | — | Parallelization (PR 1 dark foundation) — disabled by default; no production code path branches on enabled=true yet. |
-| `worktree` | object | — | Worktree isolation policy for parallel coder dispatch lanes (general surface; Lean Turbo keeps its legacy per-mode fields). |
-| `turbo` | object | — | Turbo execution strategy block (Phase 1). Absent means current behavior unchanged. |
-| `turbo_mode` | boolean | false | Bypass reviewer/test gates for rapid iteration (v6.40). When true, new sessions start with turbo mode on (session default); /swarm turbo still toggles per session. Directory-less constructions default off. |
-| `quiet` | boolean | true | Suppress non-critical startup warnings (default true keeps the TUI clean). Set false to restore verbose warnings for debugging. |
-| `version_check` | boolean | true | Background staleness check against npm, throttled to once per 24h (issue #675). Set false to fully disable the network call. |
-| `full_auto` | object | { … } | Full-auto autonomous orchestration with critic oversight: permission policy, denial accounting, oversight cadence triggers (v2 preserves v1 fields so existing configs load unchanged). |
-| `pr_workflow` | object | — | PR workflows (the PR_REVIEW, PR_FEEDBACK and CI_MONITOR architect modes) — enabled by default. enabled: false removes the PR-only tools and mode instructions from every agent and makes /swarm pr-review, /swarm pr-feedback and /swarm ci-monitor refuse to start. |
-| `pr_feedback_loop` | object | — | Autonomous PR babysitting settling loop (issue #2502) — triple opt-in with pr_monitor.enabled + pr_monitor.auto_pr_feedback; off by default; publication profile is none-only. |
-| `pr_monitor` | object (strict) | — | GitHub PR subscription and polling (FR-001) — disabled by default; opt-in for real-time PR status updates. |
-| `external_skills` | object | — | External skills: candidate model, discovery, and quarantine store (FR-001) — all subsystems opt-in. |
-| `skills` | object | — | Opt-in gate for the 7 skill_* management tools (FR-004). Default false: the tools are host-denied for every agent except skill_improver (genuinely unreachable, not merely unlisted — issue #2528). |
-| `skill_opt` | object (strict) | — | Governed skill optimizer (issue #1822). Disabled by default; /swarm skill-opt run requires enabled: true. All other subcommands are proposal-only/read-only by default. |
-| `dashboard` | object (strict) | — | Opt-in local mission-control dashboard over durable swarm state (issue #2509). Disabled by default; set port > 0 to enable the loopback-only read-only view. |
+| Key | Type | Default | Description | Consumed by |
+| --- | ---- | ------- | ----------- | ----------- |
+| `$schema` | string | — | JSON Schema URL for editor validation/autocomplete of this file (issue #1663). Ignored at runtime; malformed values are ignored too. | src/services/config-doctor.ts:validateConfigKey |
+| `config_format_version` | integer | 1 | Config format version for the migration table. Increment when fields are deprecated. Distinct from knowledge.schema_version. | src/services/config-doctor.ts:validateConfigKey (+1) |
+| `preset` | enum(default \| conservative) | — | Defaults profile: "default" applies the governed v8 defaults; "conservative" restores the pre-flip (v7) defaults for every flipped surface (#2504). | src/commands/council.ts:parseArgs (+3) |
+| `agents` | record<string, object> | — | Per-agent overrides keyed by agent name for the default swarm (e.g. "architect", "coder"). Multi-swarm setups configure agents under swarms.<id>.agents instead. | src/agents/index.ts:_swarmAgentsMap (+1) |
+| `default_agent` | string | — | Agent set as the primary mode. Omitted: every generated *_architect is primary. Exact generated name (e.g. "local_architect"): only that agent. Base role name (e.g. "coder"): every generated agent with that base role. Unknown strings warn once and fall back to architect primaries. | src/agents/index.ts:getAgentConfigs (+2) |
+| `auto_select_architect` | boolean \| string | — | Auto-select the swarm architect for new sessions instead of OpenCode built-ins. Omitted or false: manual selection (omitted behaves as false). true: enable auto-select and disable built-in build/plan agents. "<architect_name>" (e.g. "mega_architect"): enable targeting one architect in multi-swarm setups. | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `swarms` | record<string, object> | — | Multiple swarms keyed by swarm ID (no underscores allowed). The first swarm, or one named "default", provides the primary architect. | src/agents/index.ts:createAgents (+3) |
+| `max_iterations` | number | 5 | Maximum pipeline iterations per task (1-10). | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `pipeline` | object | — | Pipeline stage/model settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+3) |
+| `phase_complete` | object | — | Phase-completion gate settings. | src/index.ts:initializeOpenCodeSwarm (+3) |
+| `qa_retry_limit` | number | 3 | Maximum QA retry rounds per task (1-10). | src/agents/index.ts:createSwarmAgents (+1) |
+| `execution_mode` | enum(strict \| balanced \| fast) | "balanced" | Performance mode controlling optional hook execution overhead: "strict", "balanced", or "fast". | src/agents/architect.ts:createArchitectAgent (+3) |
+| `inject_phase_reminders` | boolean | true | Inject phase reminder directives during execution. | src/hooks/pipeline-tracker.ts:createPipelineTrackerHook (+1) |
+| `hooks` | object | — | Hook subsystem toggles and settings. | src/commands/registry.ts:handlePrFeedbackCommandWithTransition (+3) |
+| `pr_review_resilience` | object (strict) | — | PR review base-wave staged canary/fanout resilience settings. | src/tools/dispatch-lanes.ts:executeDispatchLanesAsync (+1) |
+| `review_routing` | object (strict) | — | Semantic review routing receipt enforcement for Stage B (default on; set enforce_receipts=false only as a one-release rollback). | src/background/stage-b-gates.ts:ingestBackgroundStageBCompletion (+3) |
+| `lane_liveness_watchdog` | object (strict) | — | Lane liveness watchdog: execution deadline and stall escalation for PR workflow lanes. | src/commands/registry.ts:handlePrFeedbackCommandWithTransition (+3) |
+| `dispatch_protection` | object (strict) | — | Dispatch protection: action-local spawn-failure circuit breaker and token-bucket rate limiting for native task delegations. | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `pr_review_legacy_transcript_compatibility` | boolean | — | Deprecated migration-only opt-in for transcript-row PR-review base and micro discovery lanes. | src/tools/dispatch-lanes.ts:launchAsyncLane (+1) |
+| `gates` | object | — | Quality gate configuration (v6.9 anti-slop features). | src/config/loader.ts:sanitizeGatesConfig (+2) |
+| `context_budget` | object | — | Context budget thresholds. | src/hooks/context-budget.ts:createContextBudgetHandler (+3) |
+| `pricing` | object | — | Token/cost estimation fallback table. Provider-reported cost wins when present; entries only estimate from usage tokens when reports omit cost. | src/background/delegation-lifecycle.ts:emitDelegationCostObservation (+3) |
+| `guardrails` | object | — | Loop containment and safety guardrails: tool-call caps, denial tracking, destructive-command blocking, shell audit. | src/config/loader.ts:buildConfigWithMeta (+3) |
+| `watchdog` | object | — | Scope-guard and delegation-ledger watchdog settings. | src/hooks/pr-workflow-gate.ts:evaluateLaneLivenessWatchdogEscalation (+2) |
+| `self_review` | object | — | Advisory self-review after coder delegation. | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `auto_review` | object | — | Opt-in execution-diff review by the reviewer model in a fresh ephemeral session at task/phase boundaries. | src/agents/index.ts:createSwarmAgents (+3) |
+| `tool_filter` | object | — | Controls which plugin tools each agent is allowed to use; enforced through host-side per-agent permission denies (issue #2528). enabled: false lifts the plugin-tool allow-list but keeps each role's read-only write-family floor. | src/agents/index.ts:getAgentConfigs (+2) |
+| `authority` | object | — | Per-agent file write authority rules. | src/hooks/delegation-gate/worktree-isolation.ts:maybeSelectRecoverableAuthority (+3) |
+| `plan_cursor` | object | — | Compressed plan summary injection settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+1) |
+| `context_map` | object | — | Context Map (issue #1104, FR-006) — opt-in. | src/hooks/context-capsule-inject.ts:createContextCapsuleInjectHook (+2) |
+| `repo_graph` | object | {} | Repository dependency-graph settings (builder excludes, incremental refresh). Nested defaults materialize when the whole section is omitted. | src/evaluation/retrieval-quality.ts:materializeDisposableWorkspace (+3) |
+| `evidence` | object | — | Evidence retention and storage settings. | src/background/candidate-parser.ts:parseText (+3) |
+| `summaries` | object | — | Summary generation settings. | src/commands/close/orchestrator.ts:handleCloseCommand (+2) |
+| `retention` | object | {} | Retention sweep settings (issue #2483). | src/commands/close/orchestrator.ts:handleCloseCommand (+3) |
+| `review_passes` | object | — | Dual-pass security review settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+1) |
+| `adversarial_detection` | object | — | Same-model adversarial checker detection settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+1) |
+| `adversarial_testing` | object | { … } | Cross-model adversarial testing settings. | src/agents/index.ts:createSwarmAgents (+1) |
+| `integration_analysis` | object | — | Integration analysis settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+1) |
+| `docs` | object | — | Documentation synthesizer (docs agent) settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+1) |
+| `design_docs` | object | — | Structured design-doc generation (issue #1080, docs_design agent) — opt-in. | src/agents/index.ts:createSwarmAgents (+3) |
+| `speckit_checkoff` | object | — | Spec-Kit tasks.md check-off round trip (issue #2501) — opt-in, never on by default. | src/sdd/speckit-checkoff.ts:maybePropagateSpeckitCheckoff (+1) |
+| `git` | object | — | Git executable resolution override (issue #2236 hardening). | src/config/loader.ts:exposedGitBinary |
+| `ui_review` | object | — | UI/UX review (designer agent) settings. | src/agents/index.ts:createSwarmAgents (+3) |
+| `compaction_advisory` | object | — | Compaction advisory settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+1) |
+| `lint` | object | — | Lint gate settings. | src/agents/project-context.ts:selectLintCommand (+3) |
+| `secretscan` | object | — | Secret scanning settings. | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+2) |
+| `checkpoint` | object (strict) | — | Checkpoint settings. | src/background/delegation-health.ts:writeDelegationHealthArtifact (+3) |
+| `apply_patch` | object (strict) | — | Apply-patch opt-in fuzzy matching fallback (issue #1718). | src/tools/apply-patch.ts:isUnsupportedPatchFormat (+1) |
+| `automation` | object | — | Background automation mode and per-feature toggles (v6.7 background-first rollout). | src/hooks/system-enhancer.ts:createSystemEnhancerHook (+3) |
+| `knowledge` | object | — | Two-tier cross-project knowledge base (v6.17). | src/commands/close/orchestrator.ts:handleCloseCommand (+3) |
+| `memory` | object | — | Swarm memory substrate — disabled by default so existing flows are unchanged. | src/agents/index.ts:createSwarmAgents (+3) |
+| `forge` | object | — | Forge provider (GitHub/GitLab) selection for PR/issue workflows (issue #2733). Ambiguous git remotes (mixed providers, unrecognized self-hosted hosts, or no remote) fail closed and require an explicit selection; forge.base_url passes through the same HTTPS-only / non-private / ASCII-host guards as every forge URL and is never a trust whitelist; combining base_url with provider "github" is rejected as a configuration conflict. | src/providers/forge-provider.ts:resolveForgeContextFromPluginConfig |
+| `observability` | object | — | Observability options — remote OTLP/OpenInference export is opt-in and disabled by default (issue #2485). | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `learning` | object | — | Learning subsystem: real-time admission, PRM persistence, dedup sweep (issue #1821). | src/hooks/knowledge-dedup-sweep.ts:sweepActiveNearDuplicates (+3) |
+| `consensus` | object | — | Consensus mining over completed run evidence (issue #1821). | src/tools/consensus-mine.ts:consensus_mine (+1) |
+| `curator` | object | — | Phase context consolidation and drift detection. | src/hooks/phase-monitor.ts:createPhaseMonitorHook (+1) |
+| `architectural_supervision` | object | — | Hierarchical summary review (issue #893). | src/agents/index.ts:createSwarmAgents (+3) |
+| `knowledge_application` | object | — | Knowledge-application contract (v2): warn or enforce modes, ack tracking. | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `skillPropagation` | object | — | Skill propagation gate/injection settings. | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `skill_improver` | object | — | Low-frequency, expensive-model skill improvement loop (issue #629, v2). | src/commands/close/finalize-stage.ts:runFinalizeStage (+3) |
+| `harness_evolution` | object (strict) | — | Declarative, non-executing HarnessOpt mutation policy (issue #1825). | src/commands/harness.ts:getHarnessConfig (+1) |
+| `harness_opt` | object (strict) | — | Governed HarnessOpt optimization capstone (issue #2503). Disabled by default; /swarm harness-opt run requires enabled: true plus --confirm. | src/commands/harness-opt.ts:readHarnessOptConfigFromProject (+1) |
+| `spec_writer` | object | — | Spec writer agent (v2) — independent model for .swarm/spec.md authorship. | src/tools/spec-write.ts:MAX_SPEC_BYTES |
+| `tool_output` | object | — | Tool output truncation settings (enable/disable, max lines, per-tool overrides). | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `slop_detector` | object | — | Slop detector settings (v6.29). | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `todo_gate` | object | — | TODO gate (v6.32): warn or block on new high-priority TODOs (FIXME/HACK/XXX). | src/tools/check-gate-status.ts:readEvidenceFile (+2) |
+| `incremental_verify` | object | — | Incremental verification settings (v6.29). | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `compaction_service` | object | — | Compaction service settings (v6.29). | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `prm` | object | — | PRM (Process Remediation Manager) settings. | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `council` | object (strict) | — | Work Complete Council — parallel four-member verification gate, off by default. | src/agents/index.ts:createSwarmAgents (+3) |
+| `parallelization` | object | — | Parallelization (PR 1 dark foundation) — disabled by default; no production code path branches on enabled=true yet. | (inert) |
+| `worktree` | object | — | Worktree isolation policy for parallel coder dispatch lanes (general surface; Lean Turbo keeps its legacy per-mode fields). | src/background/completion-observer.ts:createBackgroundCompletionObserver (+3) |
+| `turbo` | object | — | Turbo execution strategy block (Phase 1). Absent means current behavior unchanged. | src/agents/index.ts:createSwarmAgents (+3) |
+| `turbo_mode` | boolean | false | Bypass reviewer/test gates for rapid iteration (v6.40). When true, new sessions start with turbo mode on (session default); /swarm turbo still toggles per session. Directory-less constructions default off. | src/state.ts:resolveInitialTurboMode (+1) |
+| `quiet` | boolean | true | Suppress non-critical startup warnings (default true keeps the TUI clean). Set false to restore verbose warnings for debugging. | src/agents/index.ts:createSwarmAgents (+3) |
+| `version_check` | boolean | true | Background staleness check against npm, throttled to once per 24h (issue #675). Set false to fully disable the network call. | src/index.ts:initializeOpenCodeSwarm (+1) |
+| `full_auto` | object | { … } | Full-auto autonomous orchestration with critic oversight: permission policy, denial accounting, oversight cadence triggers (v2 preserves v1 fields so existing configs load unchanged). | src/commands/full-auto.ts:handleFullAutoCommand (+3) |
+| `pr_workflow` | object | — | PR workflows (the PR_REVIEW, PR_FEEDBACK and CI_MONITOR architect modes) — enabled by default. enabled: false removes the PR-only tools and mode instructions from every agent and makes /swarm pr-review, /swarm pr-feedback and /swarm ci-monitor refuse to start. | src/pr-review/enablement.ts:isPrWorkflowEnabled (+1) |
+| `pr_feedback_loop` | object | — | Autonomous PR babysitting settling loop (issue #2502) — triple opt-in with pr_monitor.enabled + pr_monitor.auto_pr_feedback; off by default; publication profile is none-only. | src/background/pr-feedback-loop-runtime.ts:isPrFeedbackLoopEnabled (+2) |
+| `pr_monitor` | object (strict) | — | GitHub PR subscription and polling (FR-001) — disabled by default; opt-in for real-time PR status updates. | src/background/pr-feedback-loop-runtime.ts:isPrFeedbackLoopEnabled (+3) |
+| `external_skills` | object | — | External skills: candidate model, discovery, and quarantine store (FR-001) — all subsystems opt-in. | src/agents/index.ts:createSwarmAgents (+1) |
+| `skills` | object | — | Opt-in gate for the 7 skill_* management tools (FR-004). Default false: the tools are host-denied for every agent except skill_improver (genuinely unreachable, not merely unlisted — issue #2528). | src/agents/index.ts:createSwarmAgents (+3) |
+| `skill_opt` | object (strict) | — | Governed skill optimizer (issue #1822). Disabled by default; /swarm skill-opt run requires enabled: true. All other subcommands are proposal-only/read-only by default. | src/commands/skill-opt.ts:readSkillOptConfigFromProject (+1) |
+| `dashboard` | object (strict) | — | Opt-in local mission-control dashboard over durable swarm state (issue #2509). Disabled by default; set port > 0 to enable the loopback-only read-only view. | src/index.ts:initializeOpenCodeSwarm (+1) |
 
 Sections marked `(strict)` reject unknown nested keys at config load time - a typo there makes the loader fall back to safe defaults with a startup warning. All other sections silently ignore unknown nested keys.
 

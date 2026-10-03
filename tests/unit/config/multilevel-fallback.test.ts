@@ -1,17 +1,32 @@
 import { describe, expect, test } from 'bun:test';
 import { z } from 'zod';
+import {
+	DEFAULT_AGENT_CONFIGS,
+	DEFAULT_MODELS,
+} from '../../../src/config/constants';
+import rosterJson from '../../fixtures/opencode-zen-keyless-roster.json' with {
+	type: 'json',
+};
 
 /**
- * Test suite for multi-level fallback configuration (v6.85+)
+ * Multi-level fallback configuration tests (v6.85+; rewritten for #3022).
  *
- * Validates that:
- * 1. Default agent configs have 2-level fallback chains for primary agents
- * 2. Fallback chains only use consistently-available models (big-pickle, gpt-5-nano)
- * 3. Schema constraints are respected (max 3 fallbacks per agent)
- * 4. Fallback chains provide meaningful recovery paths
+ * Before #3022 this suite pinned a LOCAL COPY of the default agents table —
+ * a fiction that had already drifted (council_member/council_moderator entries
+ * production never had) and silently rotted with the roster. It now imports the
+ * REAL constants and asserts the structural invariants against the checked-in
+ * verified keyless roster (fixture membership; refresh procedure in the fixture
+ * _meta and tests/unit/config/default-models-roster-guard.test.ts).
+ *
+ * Invariants:
+ * 1. Primary agents have 2-level fallback chains (depth 3); lightweight agents
+ *    have 1-level (depth 2).
+ * 2. Fallback chains only use models from the verified keyless roster.
+ * 3. The first fallback of a big-pickle primary is the cheap tier (ordering
+ *    pin — membership alone would accept reordered chains).
+ * 4. Schema max-3 fallbacks respected.
  */
 
-// Schema from src/config/schema.ts
 const AgentOverrideConfigSchema = z.object({
 	model: z.string().optional(),
 	temperature: z.number().min(0).max(2).optional(),
@@ -21,73 +36,12 @@ const AgentOverrideConfigSchema = z.object({
 
 type AgentOverrideConfig = z.infer<typeof AgentOverrideConfigSchema>;
 
-// Default config from src/cli/index.ts (lines 146-211)
-const DEFAULT_AGENTS: Record<string, AgentOverrideConfig> = {
-	coder: {
-		model: 'opencode/minimax-m2.5-free',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
-	},
-	reviewer: {
-		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
-	},
-	test_engineer: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	explorer: {
-		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
-	},
-	sme: {
-		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
-	},
-	critic: {
-		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
-	},
-	docs: {
-		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
-	},
-	designer: {
-		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
-	},
-	critic_sounding_board: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	critic_drift_verifier: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	critic_hallucination_verifier: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	critic_oversight: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	curator_init: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	curator_phase: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	council_member: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-	council_moderator: {
-		model: 'opencode/gpt-5-nano',
-		fallback_models: ['opencode/big-pickle'],
-	},
-};
+const ROSTER = new Set<string>((rosterJson as { models: string[] }).models);
+const CHEAP_TIER = 'opencode/mimo-v2.6-flash-free';
+const STRONG_DEFAULT = 'opencode/big-pickle';
+
+const DEFAULT_AGENTS: Record<string, AgentOverrideConfig> =
+	DEFAULT_AGENT_CONFIGS;
 
 describe('Multi-Level Fallback Configuration', () => {
 	test('All default agents have valid schema-compliant configurations', () => {
@@ -115,24 +69,21 @@ describe('Multi-Level Fallback Configuration', () => {
 
 		for (const agent of bigPickleAgents) {
 			const config = DEFAULT_AGENTS[agent];
-			expect(config.model).toBe('opencode/big-pickle');
+			expect(config.model).toBe(STRONG_DEFAULT);
 			expect(config.fallback_models).toBeDefined();
 			expect(config.fallback_models?.length).toBe(2);
-			expect(config.fallback_models?.[0]).toBe('opencode/gpt-5-nano');
-			expect(config.fallback_models?.[1]).toBe('opencode/big-pickle');
+			expect(config.fallback_models?.[0]).toBe(CHEAP_TIER);
+			expect(config.fallback_models?.[1]).toBe(STRONG_DEFAULT);
 		}
 	});
 
-	test('Coder agent has 2-level fallback (minimax → gpt-5-nano → big-pickle)', () => {
+	test('Coder has 2-level fallback (nemotron → cheap tier → big-pickle)', () => {
 		const config = DEFAULT_AGENTS.coder;
-		expect(config.model).toBe('opencode/minimax-m2.5-free');
-		expect(config.fallback_models).toEqual([
-			'opencode/gpt-5-nano',
-			'opencode/big-pickle',
-		]);
+		expect(config.model).toBe('opencode/nemotron-3-ultra-free');
+		expect(config.fallback_models).toEqual([CHEAP_TIER, STRONG_DEFAULT]);
 	});
 
-	test('Lightweight agents (test_engineer, curator, council) have 1-level fallback', () => {
+	test('Lightweight agents have 1-level fallback', () => {
 		const lightweightAgents = [
 			'test_engineer',
 			'critic_sounding_board',
@@ -141,43 +92,43 @@ describe('Multi-Level Fallback Configuration', () => {
 			'critic_oversight',
 			'curator_init',
 			'curator_phase',
-			'council_member',
-			'council_moderator',
+			'curator_postmortem',
+			'curator_consolidation',
 		];
 
 		for (const agent of lightweightAgents) {
 			const config = DEFAULT_AGENTS[agent];
+			expect(config.model).toBe(CHEAP_TIER);
 			expect(config.fallback_models).toBeDefined();
 			expect(config.fallback_models?.length).toBe(1);
-			expect(config.fallback_models?.[0]).toBe('opencode/big-pickle');
+			expect(config.fallback_models?.[0]).toBe(STRONG_DEFAULT);
 		}
 	});
 
-	test('All fallback models are from consistently-available set (big-pickle, gpt-5-nano)', () => {
-		const allowedModels = new Set([
-			'opencode/big-pickle',
-			'opencode/gpt-5-nano',
-			'opencode/minimax-m2.5-free', // Only as primary, allowed as sometimes-available
-		]);
-
+	test('All default and fallback models are from the verified keyless roster (#3022)', () => {
 		for (const [agent, config] of Object.entries(DEFAULT_AGENTS)) {
-			if (config.model && !allowedModels.has(config.model)) {
+			if (config.model && !ROSTER.has(config.model)) {
 				throw new Error(
-					`Agent ${agent} has disallowed primary model: ${config.model}`,
+					`Agent ${agent} has off-roster primary model: ${config.model}`,
 				);
 			}
-
 			for (const fallback of config.fallback_models || []) {
-				const isConsistent =
-					fallback === 'opencode/big-pickle' ||
-					fallback === 'opencode/gpt-5-nano';
-				expect(isConsistent).toBe(true);
+				if (!ROSTER.has(fallback)) {
+					throw new Error(
+						`Agent ${agent} has off-roster fallback model: ${fallback}`,
+					);
+				}
+			}
+		}
+		for (const [role, model] of Object.entries(DEFAULT_MODELS)) {
+			if (!ROSTER.has(model)) {
+				throw new Error(`DEFAULT_MODELS.${role} is off-roster: ${model}`);
 			}
 		}
 	});
 
 	test('Schema respects max 3 fallbacks limit', () => {
-		for (const [agent, config] of Object.entries(DEFAULT_AGENTS)) {
+		for (const [, config] of Object.entries(DEFAULT_AGENTS)) {
 			const fallbackCount = config.fallback_models?.length || 0;
 			expect(fallbackCount).toBeLessThanOrEqual(3);
 		}
@@ -186,39 +137,35 @@ describe('Multi-Level Fallback Configuration', () => {
 	test('Fallback chains provide meaningful recovery', () => {
 		// Scenario 1: Coder primary unavailable
 		const coderChain = [
-			'opencode/minimax-m2.5-free',
+			DEFAULT_AGENTS.coder.model,
 			...(DEFAULT_AGENTS.coder.fallback_models || []),
 		];
 		const coderAvailableFallback = coderChain.find(
-			(m) => m !== 'opencode/minimax-m2.5-free',
+			(m) => m !== DEFAULT_AGENTS.coder.model,
 		);
 		expect(coderAvailableFallback).toBeDefined();
 
-		// Scenario 2: Critic with both big-pickle and gpt-5-nano unavailable (exhaustion)
-		// This is the intended edge case — fallback to third level
+		// Scenario 2: Critic exhaustion path — fallback to third level
 		const criticChain = [
-			'opencode/big-pickle',
+			DEFAULT_AGENTS.critic.model,
 			...(DEFAULT_AGENTS.critic.fallback_models || []),
 		];
 		expect(criticChain).toHaveLength(3);
-		expect(criticChain[0]).toBe('opencode/big-pickle');
-		expect(criticChain[1]).toBe('opencode/gpt-5-nano');
-		expect(criticChain[2]).toBe('opencode/big-pickle');
+		expect(criticChain[0]).toBe(STRONG_DEFAULT);
+		expect(criticChain[1]).toBe(CHEAP_TIER);
+		expect(criticChain[2]).toBe(STRONG_DEFAULT);
 
 		// Scenario 3: Only big-pickle available ensures no complete failure
 		const testEngineerChain = [
-			'opencode/gpt-5-nano',
+			DEFAULT_AGENTS.test_engineer.model,
 			...(DEFAULT_AGENTS.test_engineer.fallback_models || []),
 		];
-		expect(testEngineerChain).toEqual([
-			'opencode/gpt-5-nano',
-			'opencode/big-pickle',
-		]);
+		expect(testEngineerChain).toEqual([CHEAP_TIER, STRONG_DEFAULT]);
 	});
 
 	test('Each agent has a model assignment (explicit or inherited)', () => {
 		const agentsWithoutModel = Object.entries(DEFAULT_AGENTS).filter(
-			([_, config]) => !config.model,
+			([, config]) => !config.model,
 		);
 		expect(agentsWithoutModel).toHaveLength(0);
 	});
@@ -226,9 +173,11 @@ describe('Multi-Level Fallback Configuration', () => {
 	test('Fallback models exclude removed/inconsistent models', () => {
 		const disallowedModels = [
 			'opencode/trinity-large-preview-free', // v6.84.6 removed
+			'opencode/minimax-m2.5-free', // #3022: dropped from the zen keyless roster
+			'opencode/gpt-5-nano', // #3022: dropped from the zen keyless roster
 		];
 
-		for (const [agent, config] of Object.entries(DEFAULT_AGENTS)) {
+		for (const [, config] of Object.entries(DEFAULT_AGENTS)) {
 			for (const fallback of config.fallback_models || []) {
 				for (const disallowed of disallowedModels) {
 					expect(fallback).not.toBe(disallowed);
@@ -259,13 +208,10 @@ describe('Multi-Level Fallback Configuration', () => {
 		});
 
 		// Lightweight agents should have depth 2 (primary + 1 fallback)
-		[
-			'test_engineer',
-			'critic_sounding_board',
-			'curator_init',
-			'council_member',
-		].forEach((agent) => {
-			expect(resilienceCounts[agent]).toBe(2);
-		});
+		['test_engineer', 'critic_sounding_board', 'curator_init'].forEach(
+			(agent) => {
+				expect(resilienceCounts[agent]).toBe(2);
+			},
+		);
 	});
 });

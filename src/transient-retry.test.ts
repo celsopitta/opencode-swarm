@@ -19,11 +19,13 @@ import {
 	resetSwarmState,
 	startAgentSession,
 } from './state';
+import {
+	MODEL_UNAVAILABLE_PATTERN,
+	TRANSIENT_MODEL_ERROR_PATTERN,
+} from './utils/provider-error-classification';
 
-// The regex is private to guardrails.ts; test it inline against the same
-// source pattern so that any future change to the constant triggers a test failure.
-const TRANSIENT_MODEL_ERROR_PATTERN =
-	/rate.?limit|429|500|502|503|504|529|timeout|overloaded|model.?not.?found|temporarily.?unavailable|provider.?unavailable|server.?error|connection.?(refused|reset|timeout|lost)|bad.?gateway|gateway.?timeout|internal.?server.?error|service.?unavailable/i;
+// v7.189 (#3022): the pattern is imported from the real source (the previous
+// inline copy had silently drifted from the production regex).
 
 let testSessionId: string;
 
@@ -114,6 +116,44 @@ describe('TRANSIENT_MODEL_ERROR_PATTERN regex — pre-existing terms (regression
 	it('1.10 does NOT match a tool syntax error', () => {
 		expect(
 			TRANSIENT_MODEL_ERROR_PATTERN.test('SyntaxError: unexpected token'),
+		).toBe(false);
+	});
+});
+
+describe('TRANSIENT_MODEL_ERROR_PATTERN regex — #3022 model-unavailable additions', () => {
+	it('1.11 matches the v2 host error text "Model unavailable: <id>"', () => {
+		expect(
+			TRANSIENT_MODEL_ERROR_PATTERN.test(
+				'Model unavailable: opencode/minimax-m2.5-free',
+			),
+		).toBe(true);
+	});
+
+	it('1.12 matches the v2 error class name in a signal string', () => {
+		expect(
+			TRANSIENT_MODEL_ERROR_PATTERN.test(
+				'SessionRunnerModel.ModelUnavailableError: Model unavailable: opencode/gpt-5-nano',
+			),
+		).toBe(true);
+	});
+
+	it('1.13 matches model-unavailable embedded in a JSON envelope', () => {
+		expect(
+			TRANSIENT_MODEL_ERROR_PATTERN.test(
+				'{"sessionID":"s1","error":{"type":"provider.no-route","message":"Model unavailable: opencode/minimax-m2.5-free"}}',
+			),
+		).toBe(true);
+	});
+
+	it('1.14 MODEL_UNAVAILABLE_PATTERN matches the bare class name', () => {
+		expect(MODEL_UNAVAILABLE_PATTERN.test('Error: ModelUnavailableError')).toBe(
+			true,
+		);
+	});
+
+	it('1.15 does NOT match unrelated "unavailable" prose', () => {
+		expect(
+			MODEL_UNAVAILABLE_PATTERN.test('the parking spot is unavailable'),
 		).toBe(false);
 	});
 });

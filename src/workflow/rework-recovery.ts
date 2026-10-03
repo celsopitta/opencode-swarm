@@ -9,7 +9,11 @@ import {
 import { loadPlanJsonOnly } from '../plan/manager.js';
 import { sanitizeDiagnosticText } from '../scope/path-identity.js';
 import { ensureAgentSession } from '../state.js';
-import { reconcileSessionWorkflowWithEvidence } from './session-workflow-sync.js';
+import {
+	applySessionWorkflowView,
+	isStageARecoveredState,
+	shouldRefreshStageARecoveryView,
+} from './session-view.js';
 import {
 	appendStageARepairEvent,
 	hasGreenPostSettlementPreCheck,
@@ -188,8 +192,19 @@ export async function forceRecoverReworkTask(
 	});
 	const updatedWorkflow = getTaskWorkflowSnapshot(updated);
 	// The caller's session still says rework_required. The Stage B settlement
-	// path reads the session copy; reconcile it with the state just written.
-	reconcileSessionWorkflowWithEvidence(session, taskId, updated);
+	// path reads the session copy, so refresh it from the state just written,
+	// with the same writer-side rule the Stage A recovery writers use
+	// (session-view.ts): a rework_required view always refreshes, an
+	// at-or-above view is never downgraded.
+	if (
+		isStageARecoveredState(updatedWorkflow.state) &&
+		shouldRefreshStageARecoveryView(
+			session.taskWorkflowStates.get(taskId),
+			updatedWorkflow.state,
+		)
+	) {
+		applySessionWorkflowView(session, taskId, updatedWorkflow);
+	}
 
 	// Best-effort audit event through the shared #2665 stage_a_repair wrapper
 	// (appendCoreEventSync seam, criticalWarn on failure): the durable

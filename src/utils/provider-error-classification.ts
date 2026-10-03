@@ -34,13 +34,30 @@ export function extractStatusCode(errorMsg: string): number | null {
 
 /**
  * v6.33: Regex for transient model/provider errors that should trigger bounded
- * retry (and, in the dispatch paths, model fallback). Content is UNCHANGED from
- * the historical duplicated definition — quota is intentionally NOT here (see the
- * module doc + {@link QUOTA_ERROR_PATTERN}), so tool-output classifiers that
- * import this keep byte-identical behavior.
+ * retry (and, in the dispatch paths, model fallback). Quota is intentionally
+ * NOT here (see the module doc + {@link QUOTA_ERROR_PATTERN}), so tool-output
+ * classifiers that import this keep byte-identical behavior for quota tokens.
+ *
+ * Issue #3022: `model.?unavailable` added — OpenCode v2 hosts report a
+ * retired/unknown model id as `Model unavailable: <id>` (error class
+ * `SessionRunnerModel.ModelUnavailableError`, provider code `provider.no-route`).
+ * `.?` is zero-width-compatible, so the bare class name `ModelUnavailableError`
+ * matches too. This cannot fire the guardrails tool-output advisory on plain
+ * tool text: `isTransientProviderFailureText` (messages-transform) gates on the
+ * `providerFailureMarker` pre-filter first, which carries no model vocabulary.
  */
 export const TRANSIENT_MODEL_ERROR_PATTERN =
-	/rate.?limit|429|500|502|503|504|529|timeout|overloaded|model.?not.?found|temporarily.?unavailable|provider[_\s-]?unavailable|server.?error|network.?connection.?lost|connection.?(refused|reset|timeout|lost)|bad.?gateway|gateway.?timeout|internal.?server.?error|service.?unavailable|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|broken.?pipe|dns(?:[\s_-]+(?:resolution)?)?[\s_-]+fail|name.?not.?resolved|EAI_AGAIN/i;
+	/rate.?limit|429|500|502|503|504|529|timeout|overloaded|model.?not.?found|model.?unavailable|temporarily.?unavailable|provider[_\s-]?unavailable|server.?error|network.?connection.?lost|connection.?(refused|reset|timeout|lost)|bad.?gateway|gateway.?timeout|internal.?server.?error|service.?unavailable|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|broken.?pipe|dns(?:[\s_-]+(?:resolution)?)?[\s_-]+fail|name.?not.?resolved|EAI_AGAIN/i;
+
+/**
+ * Issue #3022: the requested model does not exist on the provider (retired
+ * default, typo, or gated tier). Retrying the SAME model can never succeed, so
+ * {@link classifyProviderFailure} routes this vocabulary to `retry_fallback`
+ * (advance to the next fallback_models entry) rather than the generic transient
+ * branch's `retry_same`. Same loose vocabulary as the transient pattern above
+ * so bare class-name signals ("Error: ModelUnavailableError") hit this branch.
+ */
+export const MODEL_UNAVAILABLE_PATTERN = /model.?unavailable/i;
 
 /**
  * Issue #1896: provider quota / usage-limit / billing exhaustion — a class
@@ -86,4 +103,17 @@ export function isTransientProviderError(signal: string): boolean {
  */
 export function isQuotaError(signal: string): boolean {
 	return signal.length > 0 && QUOTA_ERROR_PATTERN.test(signal);
+}
+
+/**
+ * True when the error class warrants a STICKY host-global model rewrite on
+ * v2 hosts (#3029 review F-002): the applied model persists on the
+ * registered agent until restart, so it must fire only for the classes
+ * where permanently rerouting the agent matches the v1 sticky fallback
+ * semantics — the retired/unavailable-model scenario the fallback chain
+ * exists for, and quota exhaustion. A single transient timeout/5xx advances
+ * only the per-session fallback selection and must not rewrite the agent.
+ */
+export function isStickyModelError(signal: string): boolean {
+	return MODEL_UNAVAILABLE_PATTERN.test(signal) || isQuotaError(signal);
 }

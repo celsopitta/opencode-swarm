@@ -18,13 +18,14 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-
+import { sanitizeContextText } from '../hooks/context-sanitizer';
 import type {
 	ContextMap,
 	DecisionEntry,
 	FileContextEntry,
 	TaskContextSummary,
 } from '../types/context-map';
+import { extractContextDecisions } from '../utils/context-decisions';
 import { extractFileSummary } from './file-summary';
 import {
 	appendDecision,
@@ -37,6 +38,52 @@ import {
 // ---------------------------------------------------------------------------
 // Parameter interface
 // ---------------------------------------------------------------------------
+
+/**
+ * A decision extracted from `.swarm/context.md`'s `## Decisions` section,
+ * ready to be persisted as a `DecisionEntry` by `updateContextMapAfterAgent`.
+ */
+export interface PostAgentDecision {
+	/** The decision text (bullet text before the first `: ` separator) */
+	decision: string;
+	/** Rationale text (after the first `: ` separator; empty when absent) */
+	rationale: string;
+	/** Phase number when the bullet carried or inherited one, else absent */
+	phase?: number;
+}
+
+/**
+ * Options for {@link extractContextDecisionsFromContextMd}.
+ */
+export interface ExtractContextDecisionsOptions {
+	/**
+	 * Session agent role used to gate the sync. `.swarm/context.md` is
+	 * architect-maintained (subagents are forbidden from writing it), so when
+	 * a role is supplied and is not an architect role — bare `'architect'`
+	 * (`ORCHESTRATOR_NAME`) or a multi-swarm prefixed form ending in
+	 * `'_architect'` — the sync returns no decisions without reading the file.
+	 * Omit to extract regardless of role.
+	 */
+	agent_role?: string;
+}
+
+/**
+ * Maximum number of context.md decisions one sync records. The architect
+ * appends newest decisions at the bottom of the file, so the window keeps the
+ * MOST RECENT entries; older entries beyond the window are never
+ * retroactively recorded.
+ */
+export const MAX_CONTEXT_MD_DECISIONS = 50;
+
+/**
+ * Character bound for the context.md content handed to the shared extractor
+ * (PR #3023 feedback FB-005). The shared extractor's own cap slices a PREFIX
+ * (oldest-first), which would invert the most-recent window for pathological
+ * file sizes and silently drop a `## Decisions` heading lying beyond the
+ * slice; this module slices from the TAIL instead so the most recent content
+ * is what gets scanned.
+ */
+export const MAX_CONTEXT_MD_CONTENT_CHARS = 1_000_000;
 
 /**
  * Parameters for updating the Context Map after an agent completes a task.
@@ -61,7 +108,7 @@ export interface PostAgentUpdateParams {
 	/** Review findings (if any) */
 	review_findings?: string[];
 	/** Decisions made during this task */
-	decisions?: Array<{ decision: string; rationale: string }>;
+	decisions?: Array<{ decision: string; rationale: string; phase?: number }>;
 	/** Project root directory */
 	directory: string;
 }
@@ -97,6 +144,106 @@ export function allocateDecisionId(
 	}
 	return `A${(max + 1n).toString()}`;
 }
+
+/**
+ * Whether a session agent role is an architect role — the bare orchestrator
+ * name (`'architect'`) or a multi-swarm prefixed form ending in
+ * `'_architect'` (mirrors `extractCapsuleRole`'s suffix idiom).
+ */
+function isArchitectRole(role: string): boolean {
+	return role === 'architect' || role.endsWith('_architect');
+}
+
+/**
+ * Extract decisions from `.swarm/context.md`'s `## Decisions` section.
+ *
+ * The context file is the repo's decisions-recording convention (architect
+ * prompt `src/agents/architect.ts`; shared `## Decisions` grammar parsed by
+ * `extractContextDecisions`, the #2493 consolidation). Each bullet
+ * `- <decision>: <rationale>` becomes a {@link PostAgentDecision}: the text
+ * before the FIRST `: ` is the decision, the remainder the rationale (a
+ * rationale may itself contain colons; a bullet without a separator yields an
+ * empty rationale). Bullets whose decision text is empty after the
+ * extractor's marker stripping are dropped.
+ *
+ * Bounded: keeps the most recent {@link MAX_CONTEXT_MD_DECISIONS} entries —
+ * entries beyond that window are never retroactively recorded.
+ *
+ * When `options.agent_role` is supplied and is not an architect role, returns
+ * `[]` without touching the filesystem (the file is architect-maintained;
+ * subagent-only sessions do not adopt its decisions).
+ *
+ * Never throws — a missing or unreadable file yields `[]`.
+ */
+export function extractContextDecisionsFromContextMd(
+	directory: string,
+	options?: ExtractContextDecisionsOptions,
+): PostAgentDecision[] {
+	if (
+		options?.agent_role !== undefined &&
+		!isArchitectRole(options.agent_role)
+	) {
+		return [];
+	}
+
+	try {
+		const contextMdPath = path.join(directory, '.swarm', 'context.md');
+		if (!_internals.existsSync(contextMdPath)) {
+			return [];
+		}
+		const content = _internals.readFileSync(contextMdPath, 'utf-8');
+		// Tail-slice before the shared extractor so the bounded scan keeps the
+		// MOST RECENT content (the extractor's internal cap slices a prefix).
+		const bounded =
+			content.length > MAX_CONTEXT_MD_CONTENT_CHARS
+				? content.slice(content.length - MAX_CONTEXT_MD_CONTENT_CHARS)
+				: content;
+		const extracted = extractContextDecisions(bounded);
+
+		const decisions: PostAgentDecision[] = [];
+		for (const entry of extracted) {
+			const separatorIndex = entry.text.indexOf(': ');
+			const decision =
+				separatorIndex === -1
+					? entry.text
+					: entry.text.slice(0, separatorIndex);
+			const rationale =
+				separatorIndex === -1 ? '' : entry.text.slice(separatorIndex + 2);
+			// Empty-text bullets carry no identity; pure-marker residue (e.g. a
+			// bare checkmark the shared extractor deliberately preserves) is
+			// equally junk once the bracketed markers are gone.
+			if (decision.trim() === '' || /^[\s✅]*$/.test(decision)) {
+				continue;
+			}
+			decisions.push({
+				// #3023 review PRR-001: the same source file is sanitized by
+				// every other injection consumer (curator, system-enhancer,
+				// extractors); persisted and capsule-rendered decision text
+				// must pass the shared sanitizer too.
+				decision: sanitizeContextText(decision),
+				rationale: sanitizeContextText(rationale),
+				...(entry.phase === null ? {} : { phase: entry.phase }),
+			});
+		}
+
+		if (decisions.length > MAX_CONTEXT_MD_DECISIONS) {
+			return decisions.slice(decisions.length - MAX_CONTEXT_MD_DECISIONS);
+		}
+		return decisions;
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Upper bound for the PERSISTED decisions log in `.swarm/context-map.json`
+ * (PR #3023 feedback FB-002). The log is append-only within this window:
+ * after each update the most recent entries are kept and older ones are
+ * trimmed at save time, so reworded decision variants cannot grow the file
+ * without bound. The capsule read surface is additionally capped by
+ * `MAX_CAPSULE_DECISIONS` in the capsule builder.
+ */
+export const MAX_PERSISTED_DECISIONS = 200;
 
 /**
  * Derive a TaskContextSummary-compatible final_status from the agent's
@@ -526,26 +673,56 @@ export function updateContextMapAfterAgent(
 
 		map = _internals.appendTaskHistory(map, taskSummary);
 
-		// 4. Append decisions
+		// 4. Append decisions (idempotent: exact-text duplicates are skipped so
+		// re-syncing `.swarm/context.md` on every task completion does not
+		// grow the log; first-write-wins — an edited rationale never updates
+		// the stored entry, and a re-worded decision text is a new entry).
 		if (params.decisions && params.decisions.length > 0) {
+			// Entries whose decision text is empty carry no identity and are
+			// never recorded.
+			const batch = params.decisions.filter(
+				(entry) => (entry.decision ?? '').trim() !== '',
+			);
 			// Derive the first id from the current map, then advance the suffix
 			// locally per append: O(map.decisions + decisions) total instead of
 			// rescanning the whole array per decision. Each emitted id keeps allocateDecisionId's
 			// `A<n>` output grammar (the append below reassigns `map`, so a
 			// mid-call re-derivation would see prior appends — equivalent output,
 			// just quadratic).
+			// Null/malformed stored entries (legacy corruption — the class
+			// allocateDecisionId already tolerates) contribute no identity.
+			const existingTexts = new Set(
+				map.decisions.map((entry) => String(entry?.decision ?? '').trim()),
+			);
 			let nextSuffix = BigInt(allocateDecisionId(map.decisions).slice(1));
-			for (const entry of params.decisions) {
+			for (const entry of batch) {
+				const text = String(entry.decision).trim();
+				if (existingTexts.has(text)) {
+					continue;
+				}
+				existingTexts.add(text);
 				const decision: DecisionEntry = {
 					id: `A${nextSuffix.toString()}`,
 					decision: entry.decision,
 					rationale: entry.rationale,
 					timestamp: new Date().toISOString(),
 					task_id: params.task_id,
+					...(entry.phase === undefined ? {} : { phase: entry.phase }),
 				};
 				map = _internals.appendDecision(map, decision);
 				nextSuffix += 1n;
 			}
+		}
+
+		// Bound the persisted log (FB-002): keep the most recent entries when
+		// the append-only log exceeds the window.
+		if (map.decisions.length > MAX_PERSISTED_DECISIONS) {
+			map = {
+				...map,
+				decisions: map.decisions.slice(
+					map.decisions.length - MAX_PERSISTED_DECISIONS,
+				),
+			};
 		}
 
 		// 5. Save and return

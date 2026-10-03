@@ -493,23 +493,28 @@ export const SUMMARIZER_EXEMPT_TOOL_NAMES = [
 // Default models for each agent/category
 // v6.14: switched to free OpenCode Zen models; architect key intentionally
 // omitted so it inherits the OpenCode UI model selection.
+// v7.189 (#3022): rotated off opencode/minimax-m2.5-free and opencode/gpt-5-nano
+// (both dropped from the zen keyless roster — `Model unavailable` at first
+// delegation). New ids verified keyless-live 2026-10-02 on @opencode/cli 2.0.21
+// (see tests/fixtures/opencode-zen-keyless-roster.json + the roster-guard test
+// for the refresh procedure).
 export const DEFAULT_MODELS: Record<string, string> = {
 	// Explorer — fast read-heavy analysis
 	explorer: 'opencode/big-pickle',
 
 	// Pipeline agents — differentiated models for writing vs reviewing
-	coder: 'opencode/minimax-m2.5-free',
+	coder: 'opencode/nemotron-3-ultra-free',
 	reviewer: 'opencode/big-pickle',
-	test_engineer: 'opencode/gpt-5-nano',
+	test_engineer: 'opencode/mimo-v2.6-flash-free',
 
 	// SME, Critic variants, Docs, Designer — reasoning/general tasks
 	sme: 'opencode/big-pickle',
 	researcher: 'opencode/big-pickle',
 	critic: 'opencode/big-pickle',
-	critic_sounding_board: 'opencode/gpt-5-nano',
-	critic_drift_verifier: 'opencode/gpt-5-nano',
-	critic_hallucination_verifier: 'opencode/gpt-5-nano',
-	critic_oversight: 'opencode/gpt-5-nano',
+	critic_sounding_board: 'opencode/mimo-v2.6-flash-free',
+	critic_drift_verifier: 'opencode/mimo-v2.6-flash-free',
+	critic_hallucination_verifier: 'opencode/mimo-v2.6-flash-free',
+	critic_oversight: 'opencode/mimo-v2.6-flash-free',
 	// Architecture supervisor is the expensive cross-task reviewer — inherits the
 	// critic model at runtime; this entry mirrors that for config/doc completeness.
 	critic_architecture_supervisor: 'opencode/big-pickle',
@@ -519,10 +524,10 @@ export const DEFAULT_MODELS: Record<string, string> = {
 	designer: 'opencode/big-pickle',
 
 	// Curator agents — lightweight read-only analysis (same model family as explorer)
-	curator_init: 'opencode/gpt-5-nano',
-	curator_phase: 'opencode/gpt-5-nano',
-	curator_postmortem: 'opencode/gpt-5-nano',
-	curator_consolidation: 'opencode/gpt-5-nano',
+	curator_init: 'opencode/mimo-v2.6-flash-free',
+	curator_phase: 'opencode/mimo-v2.6-flash-free',
+	curator_postmortem: 'opencode/mimo-v2.6-flash-free',
+	curator_consolidation: 'opencode/mimo-v2.6-flash-free',
 
 	// v2: Skill improver — defaults to a strong reasoning model, but is gated
 	// behind skill_improver.enabled and a daily quota (issue #629).
@@ -545,92 +550,92 @@ export const DEFAULT_AGENT_CONFIGS: Record<
 	{ model: string; fallback_models: string[] }
 > = {
 	coder: {
-		model: 'opencode/minimax-m2.5-free',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		model: 'opencode/nemotron-3-ultra-free',
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	reviewer: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	test_engineer: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	explorer: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	sme: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	researcher: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	critic: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	docs: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	docs_design: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	designer: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano', 'opencode/big-pickle'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free', 'opencode/big-pickle'],
 	},
 	critic_sounding_board: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	critic_drift_verifier: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	critic_hallucination_verifier: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	critic_oversight: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	critic_architecture_supervisor: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free'],
 	},
 	critic_finding_validator: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free'],
 	},
 	curator_init: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	curator_phase: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	curator_postmortem: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	curator_consolidation: {
-		model: 'opencode/gpt-5-nano',
+		model: 'opencode/mimo-v2.6-flash-free',
 		fallback_models: ['opencode/big-pickle'],
 	},
 	skill_improver: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free'],
 	},
 	spec_writer: {
 		model: 'opencode/big-pickle',
-		fallback_models: ['opencode/gpt-5-nano'],
+		fallback_models: ['opencode/mimo-v2.6-flash-free'],
 	},
 };
 

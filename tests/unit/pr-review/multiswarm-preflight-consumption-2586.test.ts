@@ -73,7 +73,16 @@ function catalogClient(
 }
 
 const OPENCODE_CATALOG = catalogClient([
-	{ id: 'opencode', models: ['big-pickle', 'minimax-m2.5-free', 'gpt-5-nano'] },
+	{
+		id: 'opencode',
+		models: [
+			'big-pickle',
+			'nemotron-3-ultra-free',
+			'mimo-v2.6-flash-free',
+			'minimax-m2.5-free',
+			'gpt-5-nano',
+		],
+	},
 ]);
 
 const baseConfig = {

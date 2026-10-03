@@ -24,6 +24,15 @@ export const STATE_MOCK_TRANSITIVE_STUBS = {
 	setFinalAccountingWarningBand: () => undefined,
 	getFinalAccountingWarningBand: () => false,
 	clearFinalAccountingWarningBands: () => undefined,
+	// Issue #3036: dispatch-lineage exports reached transitively through the
+	// delegation-gate / delegate-directive-injection / knowledge-receipt-tool
+	// importers; same missing-binding failure class as above.
+	recordPendingDispatchAuthorization: () => undefined,
+	setDispatchParent: () => undefined,
+	resolveDispatchParent: () => undefined,
+	clearDispatchLineageForSession: () => undefined,
+	MAX_TRACKED_DISPATCH_PARENTS: 200,
+	PENDING_DISPATCH_AUTHORIZATION_TTL_MS: 600_000,
 	MAX_TRACKED_BUDGET_SESSIONS: 500,
 	MAX_TRACKED_TASK_FILE_ATTRIBUTIONS: 128,
 	applyRehydrationCache: () => undefined,

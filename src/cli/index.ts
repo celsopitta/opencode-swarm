@@ -847,7 +847,7 @@ async function install(): Promise<number> {
 			$schema: CONFIG_SCHEMA_REF,
 			// Must match PluginConfigSchema in src/config/schema.ts
 			// v6.14: free OpenCode Zen models; v6.73+ switched to big-pickle with gpt-5-nano fallback; architect inherits OpenCode UI selection
-			// v6.85+: Multi-level fallback chains - only big-pickle and gpt-5-nano are consistently available in free tier
+			// v6.85+: Multi-level fallback chains - defaults derive from DEFAULT_AGENT_CONFIGS (see the #3022 verified roster fixture)
 			// General Council agents (council_generalist, council_skeptic, council_domain_expert)
 			// derive their models from reviewer/critic/sme entries above. No separate config
 			// entries are needed; if you want to override per-council-agent, set

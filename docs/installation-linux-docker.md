@@ -104,7 +104,7 @@ Create `~/.config/opencode/opencode-swarm.json`:
     "mega": {
       "name": "Mega",
       "agents": {
-        "architect": { "model": "opencode/gpt-5-nano" },
+        "architect": { "model": "opencode/mimo-v2.6-flash-free" },
         "coder": { "model": "minimax-coding-plan/MiniMax-M2.5" },
         "explorer": { "model": "minimax-coding-plan/MiniMax-M2.1" },
         "sme": { "model": "kimi-for-coding/k2p5" },

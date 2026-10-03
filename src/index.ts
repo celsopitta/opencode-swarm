@@ -78,7 +78,10 @@ import {
 	WatchdogConfigSchema,
 } from './config/schema';
 import { createRoleFilterSystemHook } from './context/role-filter.js';
-import { updateContextMapAfterAgent } from './context-map/post-agent-update.js';
+import {
+	extractContextDecisionsFromContextMd,
+	updateContextMapAfterAgent,
+} from './context-map/post-agent-update.js';
 import {
 	closeDashboardServerForRootIfOwner,
 	type DashboardHandle,
@@ -238,6 +241,7 @@ import {
 	recordDeniedToolCall,
 } from './hooks/trajectory-logger';
 import { estimateTokens } from './hooks/utils';
+import { applyV2AgentModelOverride } from './host/v2/model-apply';
 import {
 	openCodeSwarmV2Setup,
 	type V2SetupDependencies,
@@ -349,7 +353,10 @@ import {
 	ensureSwarmGitExcluded,
 } from './utils/gitignore-warning';
 import { resolveProjectRootDecision } from './utils/project-boundary';
-import { isQuotaError } from './utils/provider-error-classification.js';
+import {
+	isQuotaError,
+	isStickyModelError,
+} from './utils/provider-error-classification.js';
 import { withTimeout, withTimeoutSignal } from './utils/timeout';
 import { truncateToolOutput } from './utils/tool-output';
 
@@ -4014,13 +4021,43 @@ async function initializeOpenCodeSwarm(
 						errorSignal &&
 						isRetryableProviderFailure(classifyProviderFailure(errorSignal))
 					) {
-						advancePendingTaskModelRoute({
+						const routedAdvance = advancePendingTaskModelRoute({
 							childSessionID,
 							role: route.role,
 							actionDigest: route.actionDigest,
 							primaryModel: routeModel.primaryModel,
 							fallbackModels: routeModel.fallbackModels,
 						});
+						// Issue #3022 (AC3): on v2 hosts the advanced model has no
+						// output.message.model surface to land on — rewrite the
+						// REGISTERED agent's model reference (exact name; the v2
+						// editor is create-or-update and a bare role key would
+						// mint a phantom agent on multi-swarm configs). No-op on v1.
+						if (routedAdvance?.accepted && !routedAdvance.exhausted) {
+							// #3029 review F-003: fallbackIndex counts positions in the
+							// NORMALIZED chain (deduped, parse-filtered), so it must index
+							// the chain's own modelString — indexing the raw fallback list
+							// mismaps when a fallback duplicates the primary or is
+							// unparseable (applies the failing primary or skips a valid
+							// fallback).
+							// #3029 review F-002: the v2 apply is host-global (sticky until
+							// restart), so only apply it for the sticky-appropriate error
+							// classes — the retired/unavailable-model scenario this
+							// surface exists for, or quota exhaustion — never for a single
+							// transient timeout/5xx.
+							const stickyEligible = isStickyModelError(errorSignal);
+							const chainModel = routedAdvance.modelString;
+							if (
+								stickyEligible &&
+								typeof chainModel === 'string' &&
+								chainModel.length > 0
+							) {
+								void applyV2AgentModelOverride(
+									routeModel.exactAgentName,
+									chainModel,
+								);
+							}
+						}
 					} else if (
 						!route &&
 						routeModel &&
@@ -4073,6 +4110,20 @@ async function initializeOpenCodeSwarm(
 										dedupeKey: `[primary-model-fallback:${routeModel.role}]`,
 									},
 								);
+								// Issue #3022 (AC3): apply the advanced model on v2
+								// hosts by rewriting the REGISTERED agent's model
+								// reference (no-op on v1, where the chat-boundary
+								// override owns application). #3029 review F-002: the
+								// v2 apply is host-global (sticky until restart), so
+								// gate it to the sticky-appropriate error classes —
+								// retired/unavailable model or quota — never a single
+								// transient timeout/5xx.
+								if (isStickyModelError(errorSignal)) {
+									void applyV2AgentModelOverride(
+										routeModel.exactAgentName,
+										advanced.modelString,
+									);
+								}
 							}
 						}
 						// Unknown identity (error before any chat.message recorded
@@ -5991,6 +6042,12 @@ async function initializeOpenCodeSwarm(
 								implementation_summary: agentOutput.slice(0, 500),
 								task_goal: '',
 								final_status: 'completed',
+								decisions: extractContextDecisionsFromContextMd(bootstrapRoot, {
+									agent_role:
+										resolveSessionChatAgent(input.sessionID) ??
+										swarmState.activeAgent.get(input.sessionID) ??
+										'unknown',
+								}),
 								directory: bootstrapRoot,
 							});
 						}

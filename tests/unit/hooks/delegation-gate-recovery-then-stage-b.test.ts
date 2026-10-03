@@ -238,7 +238,7 @@ describe('Stage B after the durable workflow was repaired — regression: verdic
 	});
 });
 
-describe('admission reconciliation is limited to what it must change', () => {
+describe('Stage B admission leaves council generations and non-Stage-B dispatches alone', () => {
 	/** Durable pre_check_passed for a task at the given generation (1 or 2). */
 	async function seedPreCheckPassedAt(
 		taskId: string,
@@ -265,7 +265,9 @@ describe('admission reconciliation is limited to what it must change', () => {
 		// as well; the session's cached generation for 1.2 is stale (1), but the
 		// council generation is current and must not be cleared, or the later
 		// submit_council_verdicts for 1.2 fails with
-		// TASK_COUNCIL_GENERATION_REQUIRED.
+		// TASK_COUNCIL_GENERATION_REQUIRED. (The session's workflow view is
+		// repaired only by the #3032 guard, which leaves an equal-state view
+		// alone; this test pins only the council generation.)
 		const sessionID = 'sess-council-mentioned';
 		tempDir = makeTempDir('dg-council-mentioned-');
 		writePlan(tempDir, ['1.1', '1.2']);
@@ -316,7 +318,6 @@ describe('admission reconciliation is limited to what it must change', () => {
 			},
 		);
 
-		expect(session.taskWorkflowCache?.get('1.2')?.generation).toBe(2);
 		expect(session.taskCouncilWorkflowGeneration?.get('1.2')).toBe(2);
 	});
 
@@ -378,7 +379,6 @@ describe('admission reconciliation is limited to what it must change', () => {
 			},
 		);
 
-		expect(session.taskWorkflowCache?.get('1.1')?.generation).toBe(2);
 		expect(session.taskCouncilWorkflowGeneration?.get('1.1')).toBe(1);
 	});
 

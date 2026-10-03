@@ -30,7 +30,11 @@ import type {
 	ReadPolicyEntry,
 	RoleProfile,
 } from '../types/context-capsule';
-import type { ContextMap, FileContextEntry } from '../types/context-map';
+import type {
+	ContextMap,
+	DecisionEntry,
+	FileContextEntry,
+} from '../types/context-map';
 import { extractFileSummary, isFileStale } from './file-summary';
 import {
 	computeContentHash,
@@ -130,6 +134,7 @@ export const DEFAULT_ROLE_PROFILES: Record<AgentRole, RoleProfile> = {
 		include_rejection: true,
 		include_coverage: false,
 		include_claims: false,
+		include_decisions: false,
 	},
 	reviewer: {
 		role: 'reviewer',
@@ -138,6 +143,7 @@ export const DEFAULT_ROLE_PROFILES: Record<AgentRole, RoleProfile> = {
 		include_rejection: true,
 		include_coverage: false,
 		include_claims: true,
+		include_decisions: false,
 	},
 	critic: {
 		role: 'critic',
@@ -146,6 +152,7 @@ export const DEFAULT_ROLE_PROFILES: Record<AgentRole, RoleProfile> = {
 		include_rejection: false,
 		include_coverage: false,
 		include_claims: false,
+		include_decisions: true,
 	},
 	test_engineer: {
 		role: 'test_engineer',
@@ -154,6 +161,7 @@ export const DEFAULT_ROLE_PROFILES: Record<AgentRole, RoleProfile> = {
 		include_rejection: true,
 		include_coverage: true,
 		include_claims: false,
+		include_decisions: false,
 	},
 	sme: {
 		role: 'sme',
@@ -162,6 +170,7 @@ export const DEFAULT_ROLE_PROFILES: Record<AgentRole, RoleProfile> = {
 		include_rejection: false,
 		include_coverage: false,
 		include_claims: false,
+		include_decisions: false,
 	},
 };
 
@@ -281,6 +290,71 @@ function formatFileDetails(filePath: string, entry: FileContextEntry): string {
 	].join('\n');
 }
 
+/**
+ * Maximum number of decisions a critic capsule's Decisions section carries
+ * (#3016). Task-scoped decisions are selected first; remaining slots go to
+ * the most recent other decisions.
+ */
+export const MAX_CAPSULE_DECISIONS = 10;
+
+/**
+ * Select the decisions surfaced in a critic capsule: entries recorded for
+ * this task first, then the most recent decisions from other tasks, capped
+ * at {@link MAX_CAPSULE_DECISIONS} entries total. When either group exceeds
+ * its share, the MOST RECENT entries win (the log is append-order).
+ */
+export function selectCapsuleDecisions(
+	decisions: readonly DecisionEntry[],
+	taskId: string,
+): DecisionEntry[] {
+	const scoped: DecisionEntry[] = [];
+	const others: DecisionEntry[] = [];
+	for (const entry of decisions) {
+		// Null/malformed stored entries (legacy corruption — the class
+		// allocateDecisionId and the append dedup already tolerate) are
+		// skipped: the capsule is a read surface and must never throw on
+		// them, because the injection hook swallows errors silently and
+		// the critic would lose the whole capsule.
+		if (entry === null || typeof entry !== 'object') {
+			continue;
+		}
+		if (entry.task_id === taskId) {
+			scoped.push(entry);
+		} else {
+			others.push(entry);
+		}
+	}
+	const scopedRecent = scoped.slice(
+		Math.max(0, scoped.length - MAX_CAPSULE_DECISIONS),
+	);
+	const remaining = Math.max(0, MAX_CAPSULE_DECISIONS - scopedRecent.length);
+	const recentOthers = others.slice(Math.max(0, others.length - remaining));
+	return [...scopedRecent, ...recentOthers];
+}
+
+/**
+ * Format one decision entry as a Decisions-section bullet, preserving the
+ * durable `A<n>` identity allocated at record time (#2720/#3015).
+ */
+function formatDecisionLine(entry: DecisionEntry): string {
+	// Null/non-object entries never reach here (filtered by
+	// selectCapsuleDecisions), but a hand-mangled OBJECT entry can still lack
+	// id/decision — render a visible placeholder instead of `undefined`.
+	const id = String(entry.id ?? '').trim() !== '' ? entry.id : '?';
+	const text =
+		String(entry.decision ?? '').trim() !== ''
+			? entry.decision
+			: '(malformed entry)';
+	let line = `- [${id}] ${text}`;
+	if (String(entry.rationale ?? '').trim() !== '') {
+		line += ` — ${entry.rationale}`;
+	}
+	if (String(entry.task_id ?? '').trim() !== '') {
+		line += ` (task ${entry.task_id})`;
+	}
+	return line;
+}
+
 // ---------------------------------------------------------------------------
 // Token budget enforcement — pruning
 // ---------------------------------------------------------------------------
@@ -298,6 +372,8 @@ const PRUNE_ORDER: string[] = [
 	'## Required Fix',
 	'## Prior Rejection',
 	'## Relevant Facts',
+	// Decisions are the critic's core design-level context — pruned last (#3016).
+	'## Decisions',
 ];
 
 /**
@@ -467,6 +543,13 @@ export function buildCapsule(params: BuildCapsuleParams): {
 		.filter((p) => p.trust_summary)
 		.map((p) => p.file_path);
 
+	// Decisions log (critic profile only, #3016): task-scoped entries first,
+	// then the most recent remaining, bounded to MAX_CAPSULE_DECISIONS.
+	const selectedDecisions: DecisionEntry[] | undefined =
+		profile.include_decisions && map.decisions.length > 0
+			? selectCapsuleDecisions(map.decisions, task_id)
+			: undefined;
+
 	// (f) Build markdown content
 	const sections: string[] = [];
 
@@ -489,6 +572,15 @@ export function buildCapsule(params: BuildCapsuleParams): {
 
 	// Read Policy
 	sections.push('## Read Policy', ...readPolicy.map(formatReadPolicyLine), '');
+
+	// Decisions log (critic role, when include_decisions is true)
+	if (selectedDecisions && selectedDecisions.length > 0) {
+		sections.push(
+			'## Decisions',
+			...selectedDecisions.map(formatDecisionLine),
+			'',
+		);
+	}
 
 	// Relevant Facts
 	if (params.relevant_facts && params.relevant_facts.length > 0) {
@@ -573,6 +665,7 @@ export function buildCapsule(params: BuildCapsuleParams): {
 		relevant_facts: params.relevant_facts ?? [],
 		review_checklist: params.review_checklist,
 		coverage_targets: params.coverage_targets,
+		decisions: selectedDecisions,
 		read_policy: readPolicy,
 		content: prunedContent,
 	};

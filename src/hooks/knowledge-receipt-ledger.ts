@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { loadPluginConfigWithMeta } from '../config/index.js';
-import { KnowledgeConfigSchema } from '../config/schema.js';
+import {
+	KnowledgeConfigSchema,
+	stripKnownSwarmPrefix,
+} from '../config/schema.js';
 import { observeReceiptTransition } from '../health/learning-health';
 import { extractPhaseIdFromLabel } from './extractors.js';
 import {
@@ -3010,6 +3013,16 @@ export interface TerminalBatchInput {
 		event_id?: string;
 	}>;
 	no_relevant_knowledge?: boolean;
+	/**
+	 * Issue #3036: sessions authorized to file this batch beyond the filer
+	 * itself — resolved server-side from registered dispatch lineage (the
+	 * knowledge_receipt tool passes the filer plus its dispatch parent). A
+	 * membership whose stamp is in this set is fileable even when it differs
+	 * from the filer's session (a legitimately dispatched child filing the
+	 * architect-stamped delegate_directive exposure). Unrelated to the
+	 * `authorization` terminal-override field below.
+	 */
+	authorized_filing_sessions?: string[];
 	authorization?: {
 		actor: 'manual-override' | 'reviewer-remediation' | 'phase-override';
 		reason: string;
@@ -3017,6 +3030,13 @@ export interface TerminalBatchInput {
 		expected_outcome?: ReceiptOutcome;
 	};
 }
+
+/**
+ * Issue #3036: upper bound on lineage-attested sessions accepted per terminal
+ * batch (applied after trim + dedupe). The only production caller passes at
+ * most two host-minted ids (filer + dispatch parent).
+ */
+export const MAX_AUTHORIZED_FILING_SESSIONS = 8;
 
 export async function validateAndCommitTerminalBatch(
 	directory: string,
@@ -3042,6 +3062,13 @@ export async function validateAndCommitTerminalBatch(
 		rejected: Array<{ entry_id: string; reason: string }>;
 		closes_no_relevant: boolean;
 		terminal_event_id?: string;
+		/**
+		 * Issue #3036: entry_id → the membership's recorded session id for every
+		 * wrong_session rejection in this batch. Out-of-band by design — the
+		 * per-item `rejected` shape stays byte-identical for existing consumers —
+		 * so the validator can name both sides of the mismatch and a remedy.
+		 */
+		wrong_session_membership_sessions?: Record<string, string>;
 	}>
 > {
 	return runLocked(directory, input.grace_days, async (paths, state) => {
@@ -3120,6 +3147,24 @@ export async function validateAndCommitTerminalBatch(
 		const traceExists = state.traceIds.has(input.trace_id);
 		const stagedOutcomes = new Map<string, ReceiptOutcome>();
 		const reservedEventIds = new Set<string>();
+		// Issue #3036: sanitized authorized-filer set — trimmed, non-empty,
+		// deduped, then capped (dedupe before cap so duplicates never crowd out
+		// distinct authorized sessions). The filer's own session is authorized
+		// by the equality path below; this set carries only lineage-attested
+		// additional sessions.
+		const authorizedFilingSessions = new Set(
+			[
+				...new Set(
+					(input.authorized_filing_sessions ?? []).filter(
+						(candidate): candidate is string => typeof candidate === 'string',
+					),
+				),
+			]
+				.map((candidate) => candidate.trim())
+				.filter((candidate) => candidate.length > 0)
+				.slice(0, MAX_AUTHORIZED_FILING_SESSIONS),
+		);
+		const wrongSessionStamps: Record<string, string> = {};
 		let authorized = false;
 		for (const item of items) {
 			const membership = state.memberships.get(
@@ -3137,8 +3182,26 @@ export async function validateAndCommitTerminalBatch(
 				continue;
 			}
 			if (membership.session_id !== input.session_id) {
-				rejected.push({ entry_id: item.entry_id, reason: 'wrong_session' });
-				continue;
+				// Issue #3036: a legitimately dispatched child may file its
+				// architect's stamp when the caller attests the dispatch lineage
+				// AND the filing agent role matches the exposure target. Every
+				// other session mismatch stays fail-closed wrong_session.
+				const roleMatches =
+					!membership.agent ||
+					(input.agent !== undefined &&
+						input.agent !== '' &&
+						stripKnownSwarmPrefix(membership.agent).toLowerCase() ===
+							stripKnownSwarmPrefix(input.agent).toLowerCase());
+				const sessionAuthorized =
+					authorizedFilingSessions.has(membership.session_id) && roleMatches;
+				if (!sessionAuthorized) {
+					rejected.push({
+						entry_id: item.entry_id,
+						reason: 'wrong_session',
+					});
+					wrongSessionStamps[item.entry_id] = membership.session_id;
+					continue;
+				}
 			}
 			if (
 				input.phase !== undefined &&
@@ -3305,6 +3368,9 @@ export async function validateAndCommitTerminalBatch(
 			rejected,
 			closes_no_relevant: false,
 			terminal_event_id: undefined,
+			...(Object.keys(wrongSessionStamps).length > 0
+				? { wrong_session_membership_sessions: wrongSessionStamps }
+				: {}),
 		};
 	});
 }

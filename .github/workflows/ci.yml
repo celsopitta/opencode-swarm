@@ -387,6 +387,13 @@ jobs:
       - name: Bare-executable-spawn ratchet (issue #2236)
         if: needs.detect-release.outputs.is-release != 'true'
         run: bun run check:bare-spawn
+      # Issue #2904: config-consumption ratchet — every PluginConfigSchema key
+      # must declare a verified consumer or an inert marker (see
+      # src/config/consumers.ts and scripts/check-config-consumption.ts).
+      - name: Config consumption ratchet (issue #2904)
+        if: needs.detect-release.outputs.is-release != 'true'
+        run: bun run scripts/check-config-consumption.ts
+
       # Issue #2349 (Phase 4.2 rung 3) recurrence guardrail: a host/library
       # error channel (`.error`/`.errors`/`.failure`) read only for a boolean
       # side-condition, discarding the value, so nothing downstream can learn

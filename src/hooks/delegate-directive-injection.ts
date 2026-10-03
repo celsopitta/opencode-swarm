@@ -27,6 +27,7 @@ import {
 } from '../agents/reviewer-directive-compliance.js';
 import { stripKnownSwarmPrefix } from '../config/schema.js';
 import { loadPlan } from '../plan/manager.js';
+import { recordPendingDispatchAuthorization } from '../state.js';
 import { log, warn } from '../utils/logger.js';
 import {
 	extractCurrentPhaseFromPlan,
@@ -234,6 +235,14 @@ export async function injectDelegateDirectivesBefore(
 			...(injectionPhaseId !== undefined ? { phase_id: injectionPhaseId } : {}),
 			config,
 		});
+		// Issue #3036: the membership this injection committed is stamped with
+		// the architect's session id. Queue a dispatch fact so the child session
+		// created for this dispatch can adopt its parent at registration time
+		// (bounded FIFO + TTL; consumed by the authoritative taskMetadata pair
+		// when that lands first).
+		if (sessionId && entries.length > 0) {
+			recordPendingDispatchAuthorization(sessionId, targetAgent);
+		}
 
 		const prefixParts: string[] = [];
 		// (#1849 RC-4) Thread the retrieval trace_id into the rendered block so the

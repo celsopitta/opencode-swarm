@@ -54,6 +54,8 @@ const CI_COMMAND_TO_SKILL_STRING: Record<string, string> = {
 	'bun run check:pending-fragment': 'bun run check:pending-fragment',
 	'bun run check:gate-portability': 'bun run check:gate-portability',
 	'bun run check:bare-spawn': 'bun run check:bare-spawn',
+	'bun run scripts/check-config-consumption.ts':
+		'bun run scripts/check-config-consumption.ts',
 	'bun run check:error-channel-discard': 'bun run check:error-channel-discard',
 	'bun run check:path-identity': 'bun run check:path-identity',
 	'bun run check:token-formula': 'bun run check:token-formula',

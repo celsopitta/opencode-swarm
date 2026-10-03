@@ -104,6 +104,7 @@ function renderStageARepairOutcome(outcome: StageARepairOutcome): string {
 export async function handleRecoverCommand(
 	directory: string,
 	args: string[],
+	sessionID?: string,
 ): Promise<string> {
 	const force = args.includes('--force');
 	if (args.includes('--coordination')) {
@@ -207,9 +208,18 @@ export async function handleRecoverCommand(
 	// .swarm/events.jsonl.
 	try {
 		const { results: repairResults, truncated: repairTruncated } =
-			await repairWedgedStageA(directory, {
-				...(taskId ? { taskIds: [taskId] } : {}),
-			});
+			await repairWedgedStageA(
+				directory,
+				// Issue #3043: the invoking session's in-memory workflow view is
+				// refreshed for repaired / already-recovered tasks so a
+				// blocked-start wedge does not survive this command in the very
+				// session that ran it (refresh is skipped for an unknown or
+				// absent session id — fail-closed).
+				{
+					...(taskId ? { taskIds: [taskId] } : {}),
+					...(sessionID ? { sessionId: sessionID } : {}),
+				},
+			);
 		const repaired = repairResults.filter((r) => r.outcome === 'repaired');
 		if (repairResults.length > 0) {
 			report.push(

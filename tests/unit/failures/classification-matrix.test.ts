@@ -8,6 +8,7 @@ import {
 	createPolicyFailure,
 	createValidationFailure,
 } from '../../../src/failures/invocation-failure';
+import { isStickyModelError } from '../../../src/utils/provider-error-classification';
 
 describe('invocation failure classification matrix', () => {
 	const providerCases = [
@@ -144,4 +145,53 @@ describe('invocation failure classification matrix', () => {
 			'do_not_retry',
 		);
 	});
+});
+
+describe('#3029 review F-004 — model-unavailable classification label pin', () => {
+	const CASES = [
+		['Model unavailable: opencode/x', 'provider.unavailable', 'retry_fallback'],
+		[
+			'SessionRunnerModel.ModelUnavailableError: Model unavailable: opencode/y',
+			'provider.unavailable',
+			'retry_fallback',
+		],
+	] as const;
+
+	for (const [signal, category, retryClass] of CASES) {
+		it(`classifies "${signal.slice(0, 40)}…" as ${category}/${retryClass}`, () => {
+			const record = classifyProviderFailure(new Error(signal));
+			expect(record.source).toBe('provider');
+			expect(record.category).toBe(category);
+			expect(record.retryClass).toBe(retryClass);
+		});
+	}
+
+	it('model-not-found control keeps the generic transient label (retry_same)', () => {
+		const record = classifyProviderFailure(
+			new Error('model not found: opencode/x'),
+		);
+		expect(record.category).toBe('provider.unavailable');
+		expect(record.retryClass).toBe('retry_same');
+	});
+});
+
+describe('#3029 review round 2 — sticky-model gate predicate', () => {
+	const STICKY_CASES = [
+		['Model unavailable: opencode/x', true],
+		['SessionRunnerModel.ModelUnavailableError raised', true],
+		['provider error: usage limit reached for copilot/premium (429)', true],
+		['insufficient credits on opencode/zen', true],
+	] as const;
+	const NON_STICKY_CASES = [
+		['provider unavailable: ECONNRESET', false],
+		['upstream 503 temporarily unavailable', false],
+		['request timed out after 30000ms', false],
+		['model not found: opencode/x', false],
+	] as const;
+
+	for (const [signal, expected] of [...STICKY_CASES, ...NON_STICKY_CASES]) {
+		it(`isStickyModelError("${signal.slice(0, 44)}") === ${expected}`, () => {
+			expect(isStickyModelError(signal)).toBe(expected);
+		});
+	}
 });

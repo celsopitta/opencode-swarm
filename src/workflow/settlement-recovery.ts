@@ -7,7 +7,11 @@ import {
 import { sanitizeDiagnosticText } from '../scope/path-identity.js';
 import { ensureAgentSession } from '../state.js';
 import { listCoderSettlementWalStates } from './coder-settlement.js';
-import { reconcileSessionWorkflowWithEvidence } from './session-workflow-sync.js';
+import {
+	applySessionWorkflowView,
+	isStageARecoveredState,
+	shouldRefreshStageARecoveryView,
+} from './session-view.js';
 import {
 	appendStageARepairEvent,
 	hasGreenPostSettlementPreCheck,
@@ -127,10 +131,19 @@ export async function recoverStageATaskSupervised(
 		workflow.state === 'reviewer_run' ||
 		workflow.state === 'tests_run'
 	) {
-		// The durable state is already past Stage A, but this session may still
-		// hold an older state (the recovery ran in another session or another
-		// process). Bring it in line with the evidence.
-		reconcileSessionWorkflowWithEvidence(session, taskId, evidence);
+		// Issue #3043: even the no-op call leaves the caller's session view
+		// consistent with durable — a session whose map still says `blocked`
+		// (the blocked-start wedge) is un-wedged here without any durable
+		// write, mirroring the fresh-write branch below.
+		if (
+			isStageARecoveredState(workflow.state) &&
+			shouldRefreshStageARecoveryView(
+				session.taskWorkflowStates.get(taskId),
+				workflow.state,
+			)
+		) {
+			applySessionWorkflowView(session, taskId, workflow);
+		}
 		return {
 			taskId,
 			generation: workflow.generation,
@@ -197,10 +210,23 @@ export async function recoverStageATaskSupervised(
 		transitionId,
 	});
 	const updatedWorkflow = getTaskWorkflowSnapshot(updated);
-	// The caller's session still holds the wedge state (idle / blocked). The
-	// Stage B settlement path reads the session copy; reconcile it now so the
-	// session is consistent as soon as the tool returns.
-	reconcileSessionWorkflowWithEvidence(session, taskId, updated);
+
+	// Issue #3043: the blocked-start arm of the #3032 split-brain. This writer
+	// just committed the audited settlement-backed stage_a_passed, so it is
+	// the authority that a `blocked` (or lagging) in-memory view in THIS
+	// session is drift — refresh the caller's session view from the durable
+	// snapshot it just wrote. The consumer-side #3038 guard keeps refusing
+	// at-or-above views; only this writer-side refresh may clear `blocked`.
+	if (isStageARecoveredState(updatedWorkflow.state)) {
+		if (
+			shouldRefreshStageARecoveryView(
+				session.taskWorkflowStates.get(taskId),
+				updatedWorkflow.state,
+			)
+		) {
+			applySessionWorkflowView(session, taskId, updatedWorkflow);
+		}
+	}
 
 	// Best-effort audit event through the shared #2665 stage_a_repair wrapper;
 	// the durable transition above is authoritative, and the append outcome is

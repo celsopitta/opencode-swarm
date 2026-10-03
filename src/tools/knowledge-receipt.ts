@@ -31,6 +31,7 @@ import {
 } from '../hooks/knowledge-receipt-validator.js';
 import type { PromotionEvidenceRecord } from '../hooks/knowledge-types.js';
 import { appendPromotionEvidence } from '../hooks/promotion-evidence-store.js';
+import { resolveDispatchParent } from '../state.js';
 import { log } from '../utils/logger.js';
 import { createSwarmTool } from './create-tool.js';
 import { knowledge_add } from './knowledge-add.js';
@@ -290,6 +291,17 @@ export const knowledge_receipt: ReturnType<typeof createSwarmTool> =
 				} catch {
 					// Cohort correlation is optional metadata; receipt authority remains local.
 				}
+				// Issue #3036: resolve the filer's dispatch lineage server-side so
+				// a legitimately dispatched child can file the architect-stamped
+				// delegate_directive exposure in its own prompt. Unregistered
+				// sessions (no lineage) authorize only themselves — the fence
+				// stays fail-closed for foreign filers, and the agent cannot
+				// forge the set through tool args.
+				const dispatchParent = resolveDispatchParent(sessionId);
+				const authorizedFilingSessions =
+					dispatchParent && dispatchParent !== sessionId
+						? [sessionId, dispatchParent]
+						: [sessionId];
 				const validation = await validateReceipt({
 					directory,
 					trace_id: traceId,
@@ -300,6 +312,7 @@ export const knowledge_receipt: ReturnType<typeof createSwarmTool> =
 					source: receiptSource,
 					cohort_id: cohortId,
 					source_link_id: linkId,
+					authorized_filing_sessions: authorizedFilingSessions,
 					items: validationItems,
 					no_relevant_knowledge: noRelevant,
 					grace_days: knowledgeConfig.receipt_close_grace_days,

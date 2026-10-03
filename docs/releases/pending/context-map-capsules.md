@@ -11,10 +11,10 @@ Adds an opt-in Context Map and Context Capsules feature (`context_map.enabled`) 
 - **File summary** (`src/context-map/file-summary.ts`): Language detection, export/import extraction, and batch population.
 - **Capsule builder** (`src/context-map/capsule-builder.ts`): Role-specific profiles, read policy generation, capsule markdown formatting, and token budget pruning. Config fields (`mode`, `agent_profiles`, `invalidate_on_hash_change`) are consumed at runtime.
 - **Capsule persistence** (`src/context-map/capsule-persistence.ts`): Save/load/delete/list capsules at `.swarm/capsules/{taskId}.json` with atomic writes.
-- **Post-agent update** (`src/context-map/post-agent-update.ts`): Updates the context map after agent task completion — refreshes file summaries, appends task history, extracts evidence findings, records decisions. Wired into `tool.execute.after` when `context_map.enabled === true`.
+- **Post-agent update** (`src/context-map/post-agent-update.ts`): Updates the context map after agent task completion — refreshes file summaries, appends task history, extracts evidence findings, records decisions (extracted from the `## Decisions` section of `.swarm/context.md`, gated to architect-orchestrated task completions; #3016). Wired into `tool.execute.after` when `context_map.enabled === true`.
 - **Telemetry** (`src/context-map/telemetry.ts`): JSONL recording/reading, structural validation (`isValidTelemetryEntry`), and summary aggregation.
 - **Injection hook** (`src/hooks/context-capsule-inject.ts`): System message transform hook that injects role-specific capsules into delegated agent sessions. Extracts delegation reason from `taskWorkflowStates` (not `lastDelegationReason`), task goal from `plan.json`, and persists capsules via `saveCapsule`.
-- **Documentation** (`docs/context-map.md`): 191-line feature documentation covering architecture, configuration, and usage.
+- **Documentation** (`docs/context-map.md`): feature documentation covering architecture, configuration, and usage.
 
 ### Wiring
 - Hook registered in `src/index.ts` system.transform chain and `tool.execute.after` for post-agent updates.

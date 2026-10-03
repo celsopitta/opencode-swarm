@@ -127,10 +127,10 @@ describe('review runtime instance isolation', () => {
 		);
 		expect(
 			resolveReviewFallbackModels('critic_finding_validator', registryA),
-		).toEqual([{ providerID: 'opencode', modelID: 'gpt-5-nano' }]);
+		).toEqual([{ providerID: 'opencode', modelID: 'mimo-v2.6-flash-free' }]);
 		expect(
 			resolveReviewFallbackModels('alpha_critic_finding_validator', registryB),
-		).toEqual([{ providerID: 'opencode', modelID: 'gpt-5-nano' }]);
+		).toEqual([{ providerID: 'opencode', modelID: 'mimo-v2.6-flash-free' }]);
 	});
 
 	test('regression F3: malformed entries do not suppress later valid fallbacks', () => {

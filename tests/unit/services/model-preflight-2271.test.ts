@@ -53,8 +53,13 @@ const CATALOG: FakeProvider[] = [
 		id: 'opencode',
 		models: {
 			// The complete set referenced by DEFAULT_MODELS so a healthy
-			// default-only config resolves 'ok'.
+			// default-only config resolves 'ok' (#3022: minimax-m2.5-free and
+			// gpt-5-nano retired; nemotron-3-ultra-free + mimo-v2.6-flash-free
+			// are the current defaults — the retired ids stay in the catalog as
+			// user-override fixtures).
 			'big-pickle': { id: 'big-pickle' },
+			'nemotron-3-ultra-free': { id: 'nemotron-3-ultra-free' },
+			'mimo-v2.6-flash-free': { id: 'mimo-v2.6-flash-free' },
 			'minimax-m2.5-free': { id: 'minimax-m2.5-free' },
 			'gpt-5-nano': { id: 'gpt-5-nano' },
 		},
@@ -186,7 +191,9 @@ describe('issue #2271 bug 4 — agent model-resolution preflight', () => {
 
 	test('runModelPreflight end-to-end on a healthy catalog finds the broken override', async () => {
 		const config = {
-			agents: { critic: { model: 'opencode/nemotron-3-ultra-free' } },
+			// #3022: a real roster-rejected id (live-verified unavailable) that
+			// is deliberately NOT in the CATALOG fixture above.
+			agents: { critic: { model: 'opencode/deepseek-v4-flash-free' } },
 		} as unknown as PluginConfig;
 		const result = await runModelPreflight(config, fakeClient(CATALOG));
 		expect(result.catalogAvailable).toBe(true);
@@ -194,7 +201,7 @@ describe('issue #2271 bug 4 — agent model-resolution preflight', () => {
 			(entry) => entry.status === 'unresolved',
 		);
 		expect(unresolved.length).toBe(1);
-		expect(unresolved[0]?.model).toBe('opencode/nemotron-3-ultra-free');
+		expect(unresolved[0]?.model).toBe('opencode/deepseek-v4-flash-free');
 	});
 
 	test('seam override is used by fetchProviderCatalog (DI contract)', async () => {

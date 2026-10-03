@@ -17,7 +17,9 @@ import {
 	writeSnapshotProjection,
 } from '../../../src/session/snapshot-writer.js';
 import {
+	recordPendingDispatchAuthorization,
 	resetSwarmState,
+	setDispatchParent,
 	startAgentSession,
 	swarmState,
 } from '../../../src/state';
@@ -41,6 +43,19 @@ afterEach(() => {
 });
 
 describe('handleResetSessionCommand', () => {
+	it('#3036 clears the in-memory dispatch lineage with the session maps', async () => {
+		startAgentSession('ses-arch-3036-rs', 'architect');
+		setDispatchParent('ses-child-3036-rs', 'ses-arch-3036-rs');
+		recordPendingDispatchAuthorization('ses-arch-3036-rs', 'reviewer');
+		expect(swarmState.dispatchParentByChildSession.size).toBe(1);
+		expect(swarmState.pendingDispatchAuthorizations).toHaveLength(1);
+
+		await handleResetSessionCommand(testDir, []);
+
+		expect(swarmState.dispatchParentByChildSession.size).toBe(0);
+		expect(swarmState.pendingDispatchAuthorizations).toHaveLength(0);
+	});
+
 	it('#2481 clears the SQLite snapshot authority transactionally', async () => {
 		writeSnapshotRows(testDir, {
 			version: 3,

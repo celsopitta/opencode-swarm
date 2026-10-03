@@ -73,3 +73,24 @@ If an audited maintainer emergency requires an owner-file correction, use a
 reviewed workflow-dispatch procedure that records the actor, commit, reason,
 and resulting release-please run. Do not add an environment-variable bypass
 to pull-request enforcement.
+
+### Guard diff semantics (issue #2997)
+
+The release-owner guard evaluates the pull request's own edits: its
+changed-file list is computed from the merge-base of the trusted base/head
+range (`git merge-base base.sha head.sha`), not from a raw two-dot diff
+against `pull_request.base.sha`. GitHub reports that field as the current
+base-branch tip at event time — a moving target — so after a release-please
+merge lands on `main`, a two-dot diff would attribute the main-side
+owner-file edits to every open PR that crossed the release boundary
+(observed on PRs #2798, #2940, and #2993). Merge-base-relative diffing
+restricts the comparison to the PR side, so base staleness across a release
+merge can never produce an unauthorized-edit accusation. Merge-group ranges
+are constructed on top of their declared `base_sha`, so their merge-base
+resolves to the declared base; the guard enforces that equivalence and fails
+closed if it ever does not hold.
+
+The job's bootstrap leg — reachable only while the checker itself is absent
+at the base SHA, i.e. the pull request introducing it — keeps a raw two-dot
+owner-file diff and permits only an empty one, so it fails in the safe
+direction and never substitutes for the merge-base semantics above.

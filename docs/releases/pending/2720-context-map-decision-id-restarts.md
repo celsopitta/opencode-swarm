@@ -40,12 +40,12 @@ external consumer that treats the id as a key.
 - This guarantees no restart-induced duplication. It does not claim global cross-process
   uniqueness: `saveContextMap` rewrites the whole file last-writer-wins, a pre-existing
   property of every context-map field.
-- Boundary: the in-tree Task-tool post-hook (`context_map.enabled` path) does not
-  currently pass `decisions`, so today the recording path this hardens is exercised via
-  the module's public API (tests, direct callers) rather than by the default hook
-  payload. The allocation change is inert for callers that record no decisions. The
-  missing producer, the missing capsule consumer, and the two doc overclaims around
-  decisions are tracked in #3016.
+- Boundary (updated by #3016): at the time this change landed, the in-tree Task-tool
+  post-hook (`context_map.enabled` path) did not pass `decisions`, so the recording
+  path this hardens was exercised via the module's public API (tests, direct callers)
+  rather than by the default hook payload. #3016 has since wired the missing producer,
+  the capsule consumer, and the two doc overclaims, so the default hook payload now
+  records decisions through this durable allocation.
 - Same defect class, different subsystem: the full-auto v2 mirror's process-local
   `reactiveOversightSequence` (which can destructively overwrite evidence files after a
   restart) is tracked separately as #3011.
