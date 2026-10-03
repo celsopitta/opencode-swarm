@@ -129,7 +129,10 @@ export function dcNormalizeCommand(cmd: string): string {
 
 	// Step 4: quote-splicing evasion e.g. r""m""dir or R''e''m''o''v''e''-''I''t''e''m
 	// Collapse both doubled double-quotes and doubled single-quotes (PS single-quote splice).
-	s = s.replace(/""/g, '');
+	// `\""` is an escaped quote followed by a closing quote, not an empty
+	// pair: collapsing it would leave an unclosed quote that hides every
+	// following command from the segment splitter (`echo "a\""; rm -rf /`).
+	s = s.replace(/(?<!\\)""/g, '');
 	s = s.replace(/''/g, '');
 
 	return s;
@@ -150,6 +153,102 @@ export function dcNormalizeCommand(cmd: string): string {
  *   - PowerShell iex / Invoke-Expression <...>
  *   - call <...> (batch)
  */
+/**
+ * Split `text` into shell words and remove quoting the way POSIX sh does:
+ * single quotes are literal (`'\''` yields a quote), double quotes keep
+ * `$` expansions as text and unescape only `\"`, `\\`, `\$` and `\``,
+ * and an unquoted backslash escapes the next character. Returns null for an
+ * unterminated quote. Used to inspect the payload of `bash -c` / `eval`.
+ */
+export function dcShellWords(text: string): string[] | null {
+	const words: string[] = [];
+	let current = '';
+	let inWord = false;
+	let i = 0;
+	while (i < text.length) {
+		const c = text[i] as string;
+		if (c === ' ' || c === '\t' || c === '\n') {
+			if (inWord) {
+				words.push(current);
+				current = '';
+				inWord = false;
+			}
+			i++;
+			continue;
+		}
+		inWord = true;
+		if (c === "'") {
+			const close = text.indexOf("'", i + 1);
+			if (close === -1) return null;
+			current += text.slice(i + 1, close);
+			i = close + 1;
+			continue;
+		}
+		if (c === '"') {
+			let j = i + 1;
+			while (j < text.length && text[j] !== '"') {
+				if (text[j] === '\\' && j + 1 < text.length) {
+					const n = text[j + 1] as string;
+					current +=
+						n === '"' || n === '\\' || n === '$' || n === '`' ? n : `\\${n}`;
+					j += 2;
+					continue;
+				}
+				current += text[j];
+				j++;
+			}
+			if (j >= text.length) return null;
+			i = j + 1;
+			continue;
+		}
+		if (c === '\\' && i + 1 < text.length) {
+			current += text[i + 1];
+			i += 2;
+			continue;
+		}
+		current += c;
+		i++;
+	}
+	if (inWord) words.push(current);
+	return words;
+}
+
+/**
+ * The first shell word of `text`, unquoted (see dcShellWords), and the index
+ * just after it in the raw text. Null for an empty string or an unterminated
+ * quote.
+ */
+export function dcFirstShellWord(
+	text: string,
+): { word: string; end: number } | null {
+	let i = 0;
+	while (i < text.length && /\s/.test(text[i] as string)) i++;
+	const start = i;
+	while (i < text.length && !/\s/.test(text[i] as string)) {
+		const c = text[i] as string;
+		if (c === "'") {
+			const close = text.indexOf("'", i + 1);
+			if (close === -1) return null;
+			i = close + 1;
+			continue;
+		}
+		if (c === '"') {
+			let j = i + 1;
+			while (j < text.length && text[j] !== '"') {
+				j += text[j] === '\\' ? 2 : 1;
+			}
+			if (j >= text.length) return null;
+			i = j + 1;
+			continue;
+		}
+		i += c === '\\' ? 2 : 1;
+	}
+	if (i === start) return null;
+	const words = dcShellWords(text.slice(start, Math.min(i, text.length)));
+	if (!words || words.length !== 1) return null;
+	return { word: words[0] as string, end: Math.min(i, text.length) };
+}
+
 export function dcStripOneWrapper(cmd: string): string | null {
 	const t = cmd.trim();
 
@@ -180,22 +279,57 @@ export function dcStripOneWrapper(cmd: string): string | null {
 		}
 	}
 
-	// bash/sh/zsh -c "inner" — case-insensitive for consistency with other wrappers
+	// bash/sh/zsh -c "inner" — case-insensitive for consistency with other
+	// wrappers. Accepts an absolute interpreter path (`/bin/bash`), short
+	// option clusters containing `c` (`-lc`, `-xc`, `-ec`), flag-only options
+	// before it (`--norc -c`, `-e -c`) and `--` after it. The script word is
+	// unquoted the way the shell does, so a quoted payload (`bash -c 'rm -rf
+	// /'`, `bash -c r"m -rf /"`) is inspected as the command it is, and the raw
+	// text after the script word is kept: redirects on the wrapper
+	// (`bash -c 'true' > /etc/passwd`) apply to the unwrapped command, and
+	// positional parameters ($0, $1, ...) become harmless extra arguments.
 	const shellMatch =
-		/^(?:bash|sh|zsh|dash|fish)(?:\.exe)?\s+-c\s+"?(.*?)"?\s*$/is.exec(t);
-	if (shellMatch) return shellMatch[1].trim();
+		/^(?:(?:\/[^\s/]+)*\/)?(?:bash|sh|zsh|dash|fish)(?:\.exe)?(?:\s+-(?:-[a-z-]+|[A-Za-z]+))*?\s+-[A-Za-z]*c[A-Za-z]*(?:\s+--)?\s+(.*)$/is.exec(
+			t,
+		);
+	if (shellMatch) {
+		let rest = shellMatch[1].trim();
+		// bash accepts more options between `-c` and the script
+		// (`bash -c -e 'script'`); the script is the first non-option word.
+		for (let guard = 0; guard < 16; guard++) {
+			const option = dcFirstShellWord(rest);
+			if (!option || !/^-[A-Za-z-]/.test(option.word) || option.word === '-') {
+				break;
+			}
+			rest = rest.slice(option.end).trim();
+			if (option.word === '--') break;
+		}
+		const first = dcFirstShellWord(rest);
+		// Malformed quoting: bash would refuse it; keep the raw text so the
+		// matchers still see it (fail toward inspection).
+		if (!first) return rest;
+		const tail = rest.slice(first.end).trim();
+		return tail ? `${first.word.trim()} ${tail}` : first.word.trim();
+	}
 
 	// eval 'inner' / eval "inner" / eval inner — the POSIX builtin executes its
 	// argument as a command, so it must be unwrapped like other wrappers or a
 	// destructive/write command hidden inside `eval` slips past every matcher
 	// (issue #1778 H3). Case-insensitive for obfuscation parity.
 	const evalMatch = /^eval\s+(.+)$/is.exec(t);
-	if (evalMatch) return evalMatch[1].replace(/^["']|["']$/g, '').trim();
+	if (evalMatch) {
+		// eval joins its unquoted arguments with spaces and runs the result.
+		const words = dcShellWords(evalMatch[1]);
+		if (words && words.length > 0) return words.join(' ').trim();
+		return evalMatch[1].replace(/^["']|["']$/g, '').trim();
+	}
 
 	// sudo / env VAR=val / time / nohup / nice -n N: strip leading word + optional args
 	// Case-insensitive: SUDO, TIME, NOHUP are valid in encoded/obfuscated commands.
 	const prefixMatch =
 		/^(?:sudo|time|nohup)\s+(.+)$/is.exec(t) ??
+		/^command(?:\s+-[pvV]+)*\s+(.+)$/is.exec(t) ??
+		/^exec(?:\s+-[cl]+|\s+-a\s+\S+)*\s+(.+)$/is.exec(t) ??
 		/^env(?:\s+[A-Za-z_][A-Za-z0-9_]*=[^\s]*)*\s+(.+)$/is.exec(t) ??
 		/^nice\s+(?:-n\s+\d+\s+)?(.+)$/is.exec(t);
 	if (prefixMatch) return prefixMatch[1].trim();
@@ -246,16 +380,31 @@ export function dcUnwrapWrappers(cmd: string): string {
  * Respects double-quoted strings (does not split inside quotes).
  * Returns array of trimmed non-empty segments.
  */
-export function dcSplitSegments(cmd: string): string[] {
+export function dcSplitSegments(
+	cmd: string,
+	options?: { posixEscapes?: boolean },
+): string[] {
 	const segments: string[] = [];
 	let current = '';
 	let inDoubleQuote = false;
 	let inSingleQuote = false;
+	const posixEscapes = options?.posixEscapes === true;
 
 	for (let i = 0; i < cmd.length; i++) {
 		const ch = cmd[i];
 		const next = cmd[i + 1];
 
+		// POSIX only: a backslash outside single quotes escapes the next
+		// character, so `\'` and `\"` never toggle quote state (`'it'\''s; x'`
+		// and `"a\""; b` split as bash splits them). Off by default: in
+		// PowerShell and cmd a backslash is a path separator (`"C:\temp\"; ...`),
+		// and honoring it there would merge the next command into a quoted
+		// segment that no `^`-anchored matcher inspects.
+		if (posixEscapes && ch === '\\' && !inSingleQuote && next !== undefined) {
+			current += ch + next;
+			i++;
+			continue;
+		}
 		if (ch === '"' && !inSingleQuote) {
 			inDoubleQuote = !inDoubleQuote;
 			current += ch;

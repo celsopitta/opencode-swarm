@@ -806,8 +806,8 @@ describe('guardrails adversarial - .swarm path evasion (sections 16-21)', () => 
 			await expectScopeBlocked(hooks.toolBefore(input, output));
 		});
 
-		test("SECURITY BYPASS: sh -c 'mv .swarm/file /tmp/' NOT blocked (wrapper evades)", async () => {
-			// Shell wrapper bypasses the guardrail - the inner mv is not detected
+		test("sh -c 'mv .swarm/file /tmp/' blocked (single-quoted wrapper payload is unquoted and inspected)", async () => {
+			// Formerly a documented bypass (the unwrap kept the single quotes).
 			const config = defaultConfig();
 			const hooks = createGuardrailsHooks(TEST_DIR, undefined, config);
 			const input = makeBashInput(
@@ -815,7 +815,7 @@ describe('guardrails adversarial - .swarm path evasion (sections 16-21)', () => 
 				"sh -c 'mv .swarm/file /tmp/'",
 			);
 			const output = makeBashOutput("sh -c 'mv .swarm/file /tmp/'");
-			await expect(hooks.toolBefore(input, output)).resolves.toBeUndefined();
+			await expect(hooks.toolBefore(input, output)).rejects.toThrow(/BLOCKED/);
 		});
 
 		test('SECURITY BYPASS: mv .//swarm/file NOT blocked (double-slash path)', async () => {

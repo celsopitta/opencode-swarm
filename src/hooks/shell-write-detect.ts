@@ -487,6 +487,178 @@ function extractRedirectPath(fileNode: unknown): string | null {
 	return text;
 }
 
+// ---------------------------------------------------------------------------
+// Process substitution: <(cmd) and >(cmd)
+// ---------------------------------------------------------------------------
+
+/**
+ * bash replaces each process substitution with a `/dev/fd/N` path the command
+ * reads from (`<(...)`) or writes to (`>(...)`). bash-parser cannot parse the
+ * syntax at all, so before parsing, each unquoted substitution is replaced
+ * with a placeholder path from this family and its inner command is analyzed
+ * separately. The placeholder is a sink, never a write target (see
+ * isNullDevice): data written to it goes to the inner command, whose own
+ * writes are detected.
+ */
+export const PROCESS_SUBSTITUTION_PLACEHOLDER_PREFIX = '/dev/fd/swarm-procsub-';
+
+/** Nesting bound for process substitutions; deeper input fails closed. */
+const MAX_PROCESS_SUBSTITUTION_DEPTH = 8;
+
+export interface ProcessSubstitution {
+	kind: '<' | '>';
+	/** The inner command, exactly as written between the parentheses. */
+	body: string;
+	placeholder: string;
+}
+
+export interface ProcessSubstitutionExtraction {
+	/** The command with every top-level substitution replaced by its placeholder. */
+	command: string;
+	substitutions: ProcessSubstitution[];
+}
+
+/** Characters after which an unquoted `<(` / `>(` starts a substitution. */
+function isSubstitutionBoundary(prev: string | undefined): boolean {
+	return (
+		prev === undefined ||
+		prev === ' ' ||
+		prev === '\t' ||
+		prev === '\n' ||
+		prev === ';' ||
+		prev === '|' ||
+		prev === '&' ||
+		prev === '('
+	);
+}
+
+/**
+ * Index of the `)` closing a group whose body starts at `start` (just after
+ * the opening `(`), honoring single quotes, double quotes, backslash escapes
+ * and nested parentheses. -1 when unbalanced.
+ */
+function findClosingParen(command: string, start: number): number {
+	let depth = 1;
+	let i = start;
+	while (i < command.length) {
+		const c = command[i] as string;
+		if (c === '\\') {
+			i += 2;
+			continue;
+		}
+		if (c === "'") {
+			const close = command.indexOf("'", i + 1);
+			if (close === -1) return -1;
+			i = close + 1;
+			continue;
+		}
+		if (c === '"') {
+			let j = i + 1;
+			while (j < command.length && command[j] !== '"') {
+				j += command[j] === '\\' ? 2 : 1;
+			}
+			if (j >= command.length) return -1;
+			i = j + 1;
+			continue;
+		}
+		if (c === '(') depth++;
+		else if (c === ')') {
+			depth--;
+			if (depth === 0) return i;
+		}
+		i++;
+	}
+	return -1;
+}
+
+/**
+ * Replace every top-level, unquoted `<(...)` / `>(...)` in `command` with a
+ * placeholder path and return the inner commands. Substitutions nested inside
+ * an inner command are left in that body (callers recurse). Returns null when
+ * the command contains something that looks like a substitution but cannot be
+ * delimited with certainty (unbalanced parentheses or quotes, or `<(` / `>(`
+ * glued to a preceding word, digit or another redirect such as `2>(` or
+ * `<<(`), so callers keep failing closed on it. Quoted text is never touched:
+ * bash performs no process substitution inside quotes.
+ */
+export function extractProcessSubstitutions(
+	command: string,
+): ProcessSubstitutionExtraction | null {
+	const substitutions: ProcessSubstitution[] = [];
+	let out = '';
+	let i = 0;
+	while (i < command.length) {
+		const c = command[i] as string;
+		if (c === '\\') {
+			out += command.slice(i, i + 2);
+			i += 2;
+			continue;
+		}
+		if (c === "'") {
+			const close = command.indexOf("'", i + 1);
+			if (close === -1) return null;
+			out += command.slice(i, close + 1);
+			i = close + 1;
+			continue;
+		}
+		if (c === '"') {
+			let j = i + 1;
+			while (j < command.length && command[j] !== '"') {
+				j += command[j] === '\\' ? 2 : 1;
+			}
+			if (j >= command.length) return null;
+			out += command.slice(i, j + 1);
+			i = j + 1;
+			continue;
+		}
+		if ((c === '<' || c === '>') && command[i + 1] === '(') {
+			if (!isSubstitutionBoundary(command[i - 1])) return null;
+			const close = findClosingParen(command, i + 2);
+			if (close === -1) return null;
+			const placeholder = `${PROCESS_SUBSTITUTION_PLACEHOLDER_PREFIX}${substitutions.length}`;
+			substitutions.push({
+				kind: c,
+				body: command.slice(i + 2, close),
+				placeholder,
+			});
+			out += placeholder;
+			i = close + 1;
+			continue;
+		}
+		out += c;
+		i++;
+	}
+	return { command: out, substitutions };
+}
+
+/**
+ * Every process-substitution body in `command`, including nested ones, for
+ * consumers (the destructive-command check) that must inspect inner commands.
+ * Returns [] when there are none or when the command cannot be delimited
+ * (the write detector fails closed on such a command).
+ */
+export function collectProcessSubstitutionBodies(command: string): string[] {
+	const bodies: string[] = [];
+	const visit = (text: string, depth: number): void => {
+		if (depth >= MAX_PROCESS_SUBSTITUTION_DEPTH) return;
+		const extracted = extractProcessSubstitutions(text);
+		if (!extracted) return;
+		for (const sub of extracted.substitutions) {
+			bodies.push(sub.body);
+			visit(sub.body, depth + 1);
+		}
+	};
+	visit(command, 0);
+	return bodies;
+}
+
+function isProcessSubstitutionPlaceholder(path: string): boolean {
+	return (
+		path.startsWith(PROCESS_SUBSTITUTION_PLACEHOLDER_PREFIX) &&
+		/^\d+$/.test(path.slice(PROCESS_SUBSTITUTION_PLACEHOLDER_PREFIX.length))
+	);
+}
+
 /**
  * Check if a path is a null/sink device (not a real write target).
  *
@@ -498,7 +670,10 @@ function extractRedirectPath(fileNode: unknown): string | null {
  */
 function isNullDevice(path: string): boolean {
 	return (
-		path === '/dev/null' || path === '/dev/zero' || path === '/dev/urandom'
+		path === '/dev/null' ||
+		path === '/dev/zero' ||
+		path === '/dev/urandom' ||
+		isProcessSubstitutionPlaceholder(path)
 	);
 }
 
@@ -2007,6 +2182,13 @@ export function detectInteractiveSession(
  * @returns WriteAnalysis with array of detected write targets; hasWrites is false when array is empty
  */
 export function detectPosixWrites(command: string): WriteAnalysis {
+	return detectPosixWritesAtDepth(command, 0);
+}
+
+function detectPosixWritesAtDepth(
+	command: string,
+	depth: number,
+): WriteAnalysis {
 	if (!command || typeof command !== 'string') {
 		return { writes: [], hasWrites: false };
 	}
@@ -2024,16 +2206,33 @@ export function detectPosixWrites(command: string): WriteAnalysis {
 		};
 	}
 
-	let ast: unknown;
-	let parseFailed = false;
-	try {
-		ast = parse(command, { mode: 'posix' });
-	} catch {
-		// Parser failed — treat as parse error (fail-closed)
-		parseFailed = true;
+	// bash-parser cannot parse process substitution. Replace each top-level
+	// <(...) / >(...) with a sink placeholder, parse the rest, and analyze each
+	// inner command on its own; an inner command that cannot be analyzed makes
+	// the whole command a parse error (fail-closed).
+	const extracted =
+		depth < MAX_PROCESS_SUBSTITUTION_DEPTH
+			? extractProcessSubstitutions(command)
+			: null;
+	const allWrites: WriteTarget[] = [];
+	let parseFailed = extracted === null;
+	if (extracted) {
+		for (const sub of extracted.substitutions) {
+			const inner = detectPosixWritesAtDepth(sub.body, depth + 1);
+			allWrites.push(...inner.writes);
+			if (inner.parseError) parseFailed = true;
+		}
 	}
 
-	const allWrites: WriteTarget[] = [];
+	let ast: unknown;
+	if (extracted && !parseFailed) {
+		try {
+			ast = parse(extracted.command, { mode: 'posix' });
+		} catch {
+			// Parser failed — treat as parse error (fail-closed)
+			parseFailed = true;
+		}
+	}
 
 	if (!parseFailed && ast && typeof ast === 'object') {
 		const leafCommands: BashNode[] = [];
@@ -2057,8 +2256,11 @@ export function detectPosixWrites(command: string): WriteAnalysis {
 		}
 	}
 
-	// If parse failed, try regex-based process substitution detection.
-	// This catches commands like `tee >(cat > file.txt)` which bash-parser cannot parse.
+	// If parse failed, still surface the writes the regex fallback can see in
+	// any >(...) for diagnostics. The command stays a parse error regardless:
+	// these writes are only a partial view, and treating them as the whole
+	// command let an unanalyzed outer write through (`echo x > /etc/passwd;
+	// tee >(cat > ok.txt)` used to report only ok.txt).
 	if (parseFailed) {
 		const procSubWrites = detectProcessSubstitutionWrites(command);
 		allWrites.push(...procSubWrites);
@@ -2076,7 +2278,7 @@ export function detectPosixWrites(command: string): WriteAnalysis {
 	return {
 		writes,
 		hasWrites: writes.length > 0,
-		parseError: parseFailed && writes.length === 0 ? true : undefined,
+		parseError: parseFailed ? true : undefined,
 	};
 }
 
@@ -2160,6 +2362,9 @@ function isDynamicPath(pathText: string | null): boolean {
 	// $VAR or ${VAR}
 	if (/\$[A-Za-z_][A-Za-z0-9_]*/.test(pathText)) return true;
 	if (/\$\{[^}]+\}/.test(pathText)) return true;
+	// Positional and special parameters ($0-$9, $@, $*, $#, $?, $$, $!, $-):
+	// their value is supplied at run time (`bash -c 'echo x > "$0"' /etc/passwd`).
+	if (/\$[0-9@*#?$!-]/.test(pathText)) return true;
 	// %VAR% is cmd.exe environment-variable expansion.
 	if (/%[A-Za-z_][A-Za-z0-9_]*%/.test(pathText)) return true;
 	// $(cmd)
@@ -2496,6 +2701,12 @@ export function resolveWriteTargets(
 	cwd: string,
 ): ResolvedWriteTarget[] {
 	if (!writes || writes.length === 0) return [];
+	if (typeof command === 'string' && command) {
+		const extracted = extractProcessSubstitutions(command);
+		if (extracted && extracted.substitutions.length > 0) {
+			return resolveWithProcessSubstitutions(extracted, writes, cwd);
+		}
+	}
 	if (!command || typeof command !== 'string') {
 		// Fall back to resolving against provided cwd without subshell tracking
 		return writes.map((original) => ({
@@ -2566,6 +2777,89 @@ export function resolveWriteTargets(
 			};
 		}
 		// Fallback: couldn't find this write in the detected set
+		return {
+			original,
+			resolvedPath: resolvePath(original.path, cwd),
+			resolved: original.path !== null && !isDynamicPath(original.path),
+		};
+	});
+}
+
+/**
+ * Whether `command` may change the shell's working directory. Quotes and
+ * backslashes are removed first so `"cd"`, `\cd` and `c""d` are seen as `cd`;
+ * any `cd`, `pushd` or `popd` delimited by non-word characters counts. Errs
+ * toward true: a false positive only leaves a relative write inside a
+ * process substitution unresolved, which the guardrail refuses.
+ */
+function mayChangeCwd(command: string): boolean {
+	const normalized = command.replace(/["'\\]/g, '');
+	return /(^|[^A-Za-z0-9_])(cd|pushd|popd)([^A-Za-z0-9_]|$)/.test(normalized);
+}
+
+/**
+ * Resolve writes for a command containing process substitutions. Writes of
+ * the outer command are resolved on the placeholder form (full cwd tracking);
+ * writes inside each substitution are resolved by recursing on its body
+ * against `cwd`. A substitution runs with the cwd the outer command has at
+ * that point, which is not tracked here, so when the outer command changes
+ * directory anywhere, a RELATIVE write inside a substitution is left
+ * unresolved (null): the guardrail then refuses it instead of checking the
+ * wrong path. A write reported by both the outer and an inner command with
+ * different resolutions is also left unresolved.
+ */
+function resolveWithProcessSubstitutions(
+	extracted: ProcessSubstitutionExtraction,
+	writes: WriteTarget[],
+	cwd: string,
+): ResolvedWriteTarget[] {
+	type Resolution = { resolvedPath: string | null; resolved: boolean };
+	const unresolved: Resolution = { resolvedPath: null, resolved: false };
+	const keyOf = (w: WriteTarget): string =>
+		buildDedupeKey(w.category, w.operator, w.path);
+	const merge = (
+		map: Map<string, Resolution>,
+		key: string,
+		next: Resolution,
+	): void => {
+		const prior = map.get(key);
+		if (!prior) map.set(key, next);
+		else if (prior.resolvedPath !== next.resolvedPath) map.set(key, unresolved);
+	};
+
+	const outer = new Map<string, Resolution>();
+	const outerWrites = detectPosixWrites(extracted.command).writes;
+	for (const r of resolveWriteTargets(extracted.command, outerWrites, cwd)) {
+		merge(outer, keyOf(r.original), {
+			resolvedPath: r.resolvedPath,
+			resolved: r.resolved,
+		});
+	}
+
+	const outerChangesCwd = mayChangeCwd(extracted.command);
+	const inner = new Map<string, Resolution>();
+	for (const sub of extracted.substitutions) {
+		const innerWrites = detectPosixWrites(sub.body).writes;
+		for (const r of resolveWriteTargets(sub.body, innerWrites, cwd)) {
+			const relative =
+				r.original.path !== null && !r.original.path.startsWith('/');
+			merge(
+				inner,
+				keyOf(r.original),
+				outerChangesCwd && relative
+					? unresolved
+					: { resolvedPath: r.resolvedPath, resolved: r.resolved },
+			);
+		}
+	}
+
+	return writes.map((original) => {
+		const key = keyOf(original);
+		const o = outer.get(key);
+		const n = inner.get(key);
+		const chosen =
+			o && n ? (o.resolvedPath === n.resolvedPath ? o : unresolved) : (o ?? n);
+		if (chosen) return { original, ...chosen };
 		return {
 			original,
 			resolvedPath: resolvePath(original.path, cwd),
