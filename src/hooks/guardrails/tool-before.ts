@@ -60,6 +60,7 @@ import { isPathUnderSwarmWorktreeBase } from '../../worktree/core.js';
 import { detectLoop } from '../loop-detector';
 import { isTaskToolId, normalizeToolName } from '../normalize-tool-name';
 import {
+	collectProcessSubstitutionBodies,
 	detectInteractiveSession,
 	detectPosixWrites,
 	detectWindowsWrites,
@@ -486,11 +487,57 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		const unwrapped = dcUnwrapWrappers(command);
 
 		// --- Split compound command into segments ---
-		const outerSegments = dcSplitSegments(command);
-		const innerSegments = dcSplitSegments(unwrapped);
+		// Backslash escapes are honored only where bash itself runs the command
+		// (the bash tool on a non-Windows host); PowerShell/cmd keep `\` as a
+		// path separator.
+		// Segments are taken BOTH with and without POSIX backslash escapes: bash
+		// treats `\"` as an escaped quote while PowerShell/cmd treat `\` as a
+		// path separator, and the executing shell is not always known (Git Bash
+		// on Windows). Inspecting both splits can only add segments, never hide
+		// one: `echo "a\""; rm -rf /` and `Get-ChildItem "C:\temp\"; Remove-Item
+		// -Recurse -Force C:\` are both seen whatever the shell.
+		const splitBothWays = (text: string): string[] => [
+			...new Set([
+				...dcSplitSegments(text),
+				...dcSplitSegments(text, { posixEscapes: true }),
+			]),
+		];
+		const outerSegments = splitBothWays(command);
+		const innerSegments = splitBothWays(unwrapped);
 		const perSegmentUnwrapped = outerSegments.map((s) => dcUnwrapWrappers(s));
+		// Commands inside <(...) / >(...) run too; inspect them like any other
+		// segment. Substitutions are searched for in every form of the command,
+		// wrapped and unwrapped, repeatedly: a substitution inside a quoted
+		// `bash -c '...'` is only visible once the wrapper is peeled, and a
+		// wrapper inside a substitution only once the body is extracted. The
+		// write detector analyzes the unwrapped form, so if this check looked
+		// only at the wrapped text, `bash -c 'diff <(rm -rf /) b'` would pass
+		// both gates.
+		const procSubSegments: string[] = [];
+		{
+			const seen = new Set<string>();
+			const queue = [command, unwrapped, ...perSegmentUnwrapped];
+			while (queue.length > 0 && seen.size < 256) {
+				const text = queue.shift() as string;
+				if (!text || seen.has(text)) continue;
+				seen.add(text);
+				for (const body of collectProcessSubstitutionBodies(text)) {
+					const segments = splitBothWays(body);
+					for (const seg of segments) {
+						const peeled = dcUnwrapWrappers(seg);
+						procSubSegments.push(seg, peeled);
+						queue.push(seg, peeled);
+					}
+				}
+			}
+		}
 		const allSegments = [
-			...new Set([...outerSegments, ...innerSegments, ...perSegmentUnwrapped]),
+			...new Set([
+				...outerSegments,
+				...innerSegments,
+				...perSegmentUnwrapped,
+				...procSubSegments,
+			]),
 		];
 
 		// Cross-segment shell variable assignments (issue #2033 review): later
@@ -1060,14 +1107,41 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		// form when an actual unwrap occurred, so normal (unwrapped) commands are
 		// analyzed byte-for-byte as before. Detection and resolveWriteTargets must
 		// use the SAME string (resolveWriteTargets re-parses it for cwd tracking).
-		const commandSegments = dcSplitSegments(command);
+		const commandSegments = dcSplitSegments(command, {
+			posixEscapes: normalizedTool === 'bash' && process.platform !== 'win32',
+		});
 		const unwrappedSegments = commandSegments.map((s) => dcUnwrapWrappers(s));
 		const didUnwrap = commandSegments.some(
 			(s, i) => unwrappedSegments[i] !== s,
 		);
 		const detectionCommand = didUnwrap ? unwrappedSegments.join('\n') : command;
 
-		const analysis = didUnwrap ? detect(detectionCommand) : primaryAnalysis;
+		const unwrappedAnalysis = didUnwrap ? detect(detectionCommand) : null;
+		const analysis = unwrappedAnalysis ?? primaryAnalysis;
+		// The unwrapped form ADDS visibility (a write inside `bash -c '...'`);
+		// it must never remove any. A write the raw command shows can be lost in
+		// the unwrap (`bash -c 'echo x #' > /etc/passwd` unwraps to a comment;
+		// `eval 'x #' > f` likewise), so the raw writes are kept alongside,
+		// except the raw "inline shell code" marker (shell `-c` or `eval`) that
+		// the unwrap itself replaces.
+		// A shell `-c` whose script is itself an expansion (`bash -c "$CMD"`)
+		// unwraps to text that hides the real command, so its marker is kept and
+		// the call refused. `eval` is not treated this way: its argument is
+		// routinely a command substitution (`eval "$(ssh-agent -s)"`).
+		const unwrappedScriptIsDynamic = unwrappedSegments.some(
+			(seg, i) => seg !== commandSegments[i] && /^\s*\$/.test(seg),
+		);
+		const rawExtraWrites = unwrappedAnalysis
+			? primaryAnalysis.writes.filter(
+					(w) =>
+						!(
+							w.category === 'interpreter_eval' &&
+							(/^eval\b/i.test(w.operator) ||
+								(!unwrappedScriptIsDynamic &&
+									/^(?:bash|sh|zsh|dash|fish)\b/i.test(w.operator)))
+						),
+				)
+			: [];
 
 		// A wrapped command whose unwrapped inner form fails to parse is also
 		// rejected for safety.
@@ -1077,7 +1151,7 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 			);
 		}
 
-		if (!analysis.hasWrites || analysis.writes.length === 0) return;
+		if (analysis.writes.length === 0 && rawExtraWrites.length === 0) return;
 
 		const declaredScope = resolveDeclaredScope(sessionID, !enforce);
 
@@ -1121,11 +1195,10 @@ export function createToolBeforeHandler(ctx: ToolBeforeContext) {
 		// is lane-rooted. Every path decision in this loop must share that base.
 		const shellDirectory = sessionWorkspaceDirectory(sessionID);
 
-		const resolvedWrites = resolveWriteTargets(
-			detectionCommand,
-			analysis.writes,
-			shellDirectory,
-		);
+		const resolvedWrites = [
+			...resolveWriteTargets(detectionCommand, analysis.writes, shellDirectory),
+			...resolveWriteTargets(command, rawExtraWrites, shellDirectory),
+		];
 
 		for (const write of resolvedWrites) {
 			if (write.resolvedPath === null) {
